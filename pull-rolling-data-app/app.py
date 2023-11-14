@@ -11,6 +11,10 @@ from nba_api.stats.static import players
 import awswrangler as wr
 from typing import List, Tuple
 
+# GAME_ID: OBJECT
+#  TEAM_ID, PLAYER_ID: INT64
+#
+
 # create a timing decorator that you can pass to other functions
 # decorators work so you're able to pass functions in perform a task then pass it back out really handy when they're
 # same tasks
@@ -212,8 +216,319 @@ def filter_and_write_game_data(game_header_w_standings_df: pd.DataFrame, team_ga
 
 
 
+@timing
+def get_boxscore_traditional(game_ids: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Retrieve traditional boxscore data for given game IDs.
+
+    Parameters:
+    -----------
+    game_ids : list of str
+        List of game IDs for which boxscore data is to be retrieved.
+
+    Returns:
+    --------
+    Tuple of two dataframes: player-level boxscore data and team-level boxscore data.
+    """
+
+
+    boxscore_trad_player_list = []
+    boxscore_trad_team_list = []
+    boxscore_trad_error_list = []
+    game_len = game_ids.shape[0]
+    loop_place = 0
+
+    for game_id in game_ids:
+        try:
+            boxscore_trad = BoxScoreTraditionalV2(game_id=game_id)
+
+            boxscore_trad_player = boxscore_trad.player_stats.get_data_frame()
+            boxscore_trad_team = boxscore_trad.team_stats.get_data_frame()
+
+            boxscore_trad_player_list.append(boxscore_trad_player)
+            boxscore_trad_team_list.append(boxscore_trad_team)
+
+        
+        except Exception as e:
+            boxscore_trad_error_list.append(game_id)
+
+            print(f'error {game_id}')
+        
+        sleep(1.1)
+        loop_place += 1
+        print(f'    {round((loop_place/game_len)*100,2)} % complete')
+
+    boxscore_traditional_player_df = pd.concat(boxscore_trad_player_list)
+    boxscore_traditional_team_df = pd.concat(boxscore_trad_team_list)
+
+    return boxscore_traditional_player_df, boxscore_traditional_team_df
+
+
+
+
+
+@timing
+def write_boxscore_traditional_to_s3(boxscore_traditional_player_df: pd.DataFrame, boxscore_traditional_team_df: pd.DataFrame) -> None:
+    """
+    Writes boxscore traditional stats for players and teams to S3 in parquet format with today's date appended to the filename.
+
+    Parameters:
+        boxscore_traditional_player_df (pd.DataFrame): DataFrame of player boxscore traditional stats
+        boxscore_traditional_team_df (pd.DataFrame): DataFrame of team boxscore traditional stats
+    """
+    today = date.today()
+    today_string = today.strftime('%Y-%m-%d')
+
+    
+    boxscore_trad_player_dtype_mapping = {
+        'GAME_ID': 'object',
+        'TEAM_ID': 'int64',
+        'TEAM_ABBREVIATION': 'object',
+        'TEAM_CITY': 'object',
+        'PLAYER_ID': 'int64',
+        'PLAYER_NAME': 'object',
+        'NICKNAME': 'object',
+        'START_POSITION': 'object',
+        'COMMENT': 'object',
+        'MIN': 'object', 
+        'FGM': 'float64',
+        'FGA': 'float64',
+        'FG_PCT': 'float64',
+        'FG3M': 'float64',
+        'FG3A': 'float64',
+        'FG3_PCT': 'float64',
+        'FTM': 'float64',
+        'FTA': 'float64',
+        'FT_PCT': 'float64',
+        'OREB': 'float64',
+        'DREB': 'float64',
+        'REB': 'float64',
+        'AST': 'float64',
+        'STL': 'float64',
+        'BLK': 'float64',
+        'TO': 'float64',
+        'PF': 'float64',
+        'PTS': 'float64',
+        'PLUS_MINUS': 'float64'
+    }
+
+    boxscore_trad_team_dtype_mapping = {
+        'GAME_ID': 'object',
+        'TEAM_ID': 'int64',
+        'TEAM_NAME': 'object',
+        'TEAM_ABBREVIATION': 'object',
+        'TEAM_CITY': 'object',
+        'MIN': 'object',
+        'FGM': 'int64',
+        'FGA': 'int64',
+        'FG_PCT': 'float64',
+        'FG3M': 'int64',
+        'FG3A': 'int64',
+        'FG3_PCT': 'float64',
+        'FTM': 'int64',
+        'FTA': 'int64',
+        'FT_PCT': 'float64',
+        'OREB': 'int64',
+        'DREB': 'int64',
+        'REB': 'int64',
+        'AST': 'int64',
+        'STL': 'int64',
+        'BLK': 'int64',
+        'TO': 'int64',
+        'PF': 'int64',
+        'PTS': 'int64',
+        'PLUS_MINUS': 'int64'
+    }
+
+
+    boxscore_traditional_player_df.astype(dtype=boxscore_trad_player_dtype_mapping)
+    boxscore_traditional_team_df.astype(dtype=boxscore_trad_team_dtype_mapping)
+
+    print('     Writing Boxscore Traditional to S3......................')
+
+    wr.s3.to_parquet(
+            df=boxscore_traditional_player_df,
+            path=f's3://nbadk-model/player_stats/boxscore_traditional/boxscore_traditional_player_{today_string}.parquet'
+        )
+
+    wr.s3.to_parquet(
+        df=boxscore_traditional_team_df,
+        path=f's3://nbadk-model/team_stats/boxscore_traditional/boxscore_traditional_team_{today_string}.parquet'
+        )
+    
+
+    return None
+
+
+
+
+@timing
+def get_boxscore_advanced(game_ids:list) ->  Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
+    """
+    Retrieves box score advanced statistics (e.g. PACE) for a list of game ids.
+
+    Args:
+        game_ids (List[str]): List of game ids to retrieve box score advanced statistics for.
+
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame, List[str]]: A tuple containing two dataframes - player_boxscore_advanced_stats_df
+        and team_boxscore_stats_advanced_df
+
+    """
+
+    today = date.today()
+    today_string = today.strftime('%Y-%m-%d')
+
+    player_boxscore_stats_list = []
+    team_boxscore_stats_list = []
+    error_game_id_list = []
+
+    game_len = len(game_ids)
+    loop_place = 0
+
+    for game_id in game_ids:
+        print(f'    Starting {game_id}')
+
+        try:
+            boxscore_stats_adv = BoxScoreAdvancedV2(game_id=game_id)
+
+            player_boxscore_stats = boxscore_stats_adv.player_stats.get_data_frame()
+            team_boxscore_stats = boxscore_stats_adv.team_stats.get_data_frame()
+
+            player_boxscore_stats_list.append(player_boxscore_stats)
+            team_boxscore_stats_list.append(team_boxscore_stats)
+
+        
+        except Exception as e:
+            error_game_id_list.append(game_id)
+
+            print(f'    error {game_id}')
+        
+        loop_place += 1
+        print(f'    {round((loop_place/game_len)*100,2)} % complete')
+        sleep(1.1)
+    
+    player_boxscore_advanced_stats_df = pd.concat(player_boxscore_stats_list)
+    team_boxscore_stats_advanced_df = pd.concat(team_boxscore_stats_list)
+
+    return player_boxscore_advanced_stats_df, team_boxscore_stats_advanced_df
+
+
+
+
+@timing
+def write_boxscore_advanced_to_s3(player_boxscore_advanced_stats_df: pd.DataFrame, 
+                                  team_boxscore_stats_advanced_df: pd.DataFrame) -> None:
+    """
+    Writes the boxscore advanced data to S3 in Parquet format.
+
+    :param player_boxscore_advanced_stats_df: A dataframe representing the player boxscore advanced stats data.
+    :param team_boxscore_stats_advanced_df: A dataframe representing the team boxscore advanced stats data.
+
+        """
+    today = date.today()
+    today_string = today.strftime('%Y-%m-%d')
+
+        
+    player_boxscore_advanced_dtypes = {
+        'GAME_ID': 'object',
+        'TEAM_ID': 'int64',
+        'TEAM_ABBREVIATION': 'object',
+        'TEAM_CITY': 'object',
+        'PLAYER_ID': 'int64',
+        'PLAYER_NAME': 'object',
+        'NICKNAME': 'object',
+        'START_POSITION': 'object',
+        'COMMENT': 'object',
+        'MIN': 'object',
+        'E_OFF_RATING': 'float64',
+        'OFF_RATING': 'float64',
+        'E_DEF_RATING': 'float64',
+        'DEF_RATING': 'float64',
+        'E_NET_RATING': 'float64',
+        'NET_RATING': 'float64',
+        'AST_PCT': 'float64',
+        'AST_TOV': 'float64',
+        'AST_RATIO': 'float64',
+        'OREB_PCT': 'float64',
+        'DREB_PCT': 'float64',
+        'REB_PCT': 'float64',
+        'TM_TOV_PCT': 'float64',
+        'EFG_PCT': 'float64',
+        'TS_PCT': 'float64',
+        'USG_PCT': 'float64',
+        'E_USG_PCT': 'float64',
+        'E_PACE': 'float64',
+        'PACE': 'float64',
+        'PACE_PER40': 'float64',
+        'POSS': 'float64',
+        'PIE': 'float64'
+    }
+
+    team_boxscore_advanced_dtypes = {
+        'GAME_ID': 'object',
+        'TEAM_ID': 'int64',
+        'TEAM_NAME': 'object',
+        'TEAM_ABBREVIATION': 'object',
+        'TEAM_CITY': 'object',
+        'MIN': 'object',  
+        'E_OFF_RATING': 'float64',
+        'OFF_RATING': 'float64',
+        'E_DEF_RATING': 'float64',
+        'DEF_RATING': 'float64',
+        'E_NET_RATING': 'float64',
+        'NET_RATING': 'float64',
+        'AST_PCT': 'float64',
+        'AST_TOV': 'float64',
+        'AST_RATIO': 'float64',
+        'OREB_PCT': 'float64',
+        'DREB_PCT': 'float64',
+        'REB_PCT': 'float64',
+        'E_TM_TOV_PCT': 'float64',
+        'TM_TOV_PCT': 'float64',
+        'EFG_PCT': 'float64',
+        'TS_PCT': 'float64',
+        'USG_PCT': 'float64',
+        'E_USG_PCT': 'float64',
+        'E_PACE': 'float64',
+        'PACE': 'float64',
+        'PACE_PER40': 'float64',
+        'POSS': 'float64',
+        'PIE': 'float64'
+    }
+
+    
+    player_boxscore_advanced_stats_df = player_boxscore_advanced_stats_df.astype(dtype=player_boxscore_advanced_dtypes)
+    team_boxscore_stats_advanced_df = team_boxscore_stats_advanced_df.astype(dtype=team_boxscore_advanced_dtypes)
+
+
+    print('     Writing Boxscore Advanced to S3')
+
+    wr.s3.to_parquet(
+        df=player_boxscore_advanced_stats_df,
+        path=f's3://nbadk-model/player_stats/boxscore_advanced/player_boxscore_advanced_stats_{today_string}.parquet'
+    )
+
+    wr.s3.to_parquet(
+        df=team_boxscore_stats_advanced_df,
+        path=f's3://nbadk-model/team_stats/boxscore_advanced/team_boxscore_advanced_stats_{today_string}.parquet'
+    )
+
+    return None
+
+
+
+
 
 game_ids_pulled, latest_game_pulled_date = get_game_ids_pulled()
 game_header_w_standings_df, team_game_line_score_df,  error_dates_list = get_game_data(latest_game_pulled_date)
 game_ids = filter_and_write_game_data(game_header_w_standings_df, team_game_line_score_df, game_ids_pulled)
+
+player_boxscore_advanced_stats_df, team_boxscore_stats_advanced_df = get_boxscore_advanced(game_ids)
+
+
+write_boxscore_advanced_to_s3(player_boxscore_advanced_stats_df, team_boxscore_stats_advanced_df)
+
+boxscore_traditional_player_df, boxscore_traditional_team_df = get_boxscore_traditional(game_ids)
+
 
