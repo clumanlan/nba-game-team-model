@@ -1,0 +1,5 @@
+awswrangler==3.4.2
+nba_api==1.4.0
+numpy==1.23.4
+numpy==1.15.1
+pandas==1.5.1

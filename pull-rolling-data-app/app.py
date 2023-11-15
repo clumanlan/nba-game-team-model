@@ -12,7 +12,7 @@ import awswrangler as wr
 from typing import List, Tuple
 
 # GAME_ID: OBJECT
-#  TEAM_ID, PLAYER_ID: INT64
+# TEAM_ID, PLAYER_ID: INT64
 #
 
 # create a timing decorator that you can pass to other functions
@@ -58,7 +58,7 @@ def get_game_ids_pulled() -> Tuple[pd.Series, str]:
     game_ids_pulled = game_headers.GAME_ID.unique()
     latest_game_date = pd.to_datetime(game_headers.GAME_DATE_EST).dt.strftime('%Y-%m-%d').unique().max()
     
-    print('latest game date pulled: {latest_game_date}')
+    print(f'latest game date pulled: {latest_game_date}')
     
     return game_ids_pulled, latest_game_date
 
@@ -204,15 +204,15 @@ def filter_and_write_game_data(game_header_w_standings_df: pd.DataFrame, team_ga
         
         wr.s3.to_parquet(
             df=game_header_w_standings_df_filtered,
-            path=f's3://nbadk-model/game_stats/game_header/game_header_{output_date}.parquet'
+            path=f's3://nbadk-model/game_stats/game_header/rolling/game_header_{output_date}.parquet'
         )
         wr.s3.to_parquet(
             df=team_game_line_score_df_filtered,
-            path=f's3://nbadk-model/team_stats/game_line_score/game_line_score_{output_date}.parquet'
+            path=f's3://nbadk-model/team_stats/game_line_score/rolling/game_line_score_{output_date}.parquet'
         )
 
 
-    return  game_ids
+    return game_ids
 
 
 
@@ -319,30 +319,30 @@ def write_boxscore_traditional_to_s3(boxscore_traditional_player_df: pd.DataFram
         'TEAM_ABBREVIATION': 'object',
         'TEAM_CITY': 'object',
         'MIN': 'object',
-        'FGM': 'int64',
-        'FGA': 'int64',
+        'FGM': 'float64',
+        'FGA': 'float64',
         'FG_PCT': 'float64',
-        'FG3M': 'int64',
-        'FG3A': 'int64',
+        'FG3M': 'float64',
+        'FG3A': 'float64',
         'FG3_PCT': 'float64',
-        'FTM': 'int64',
-        'FTA': 'int64',
+        'FTM': 'float64',
+        'FTA': 'float64',
         'FT_PCT': 'float64',
-        'OREB': 'int64',
-        'DREB': 'int64',
-        'REB': 'int64',
-        'AST': 'int64',
-        'STL': 'int64',
-        'BLK': 'int64',
-        'TO': 'int64',
-        'PF': 'int64',
-        'PTS': 'int64',
-        'PLUS_MINUS': 'int64'
+        'OREB': 'float64',
+        'DREB': 'float64',
+        'REB': 'float64',
+        'AST': 'float64',
+        'STL': 'float64',
+        'BLK': 'float64',
+        'TO': 'float64',
+        'PF': 'float64',
+        'PTS': 'float64',
+        'PLUS_MINUS': 'float64'
     }
 
 
-    boxscore_traditional_player_df.astype(dtype=boxscore_trad_player_dtype_mapping)
-    boxscore_traditional_team_df.astype(dtype=boxscore_trad_team_dtype_mapping)
+    boxscore_traditional_player_df = boxscore_traditional_player_df.astype(dtype=boxscore_trad_player_dtype_mapping)
+    boxscore_traditional_team_df = boxscore_traditional_team_df.astype(dtype=boxscore_trad_team_dtype_mapping)
 
     print('     Writing Boxscore Traditional to S3......................')
 
@@ -518,17 +518,22 @@ def write_boxscore_advanced_to_s3(player_boxscore_advanced_stats_df: pd.DataFram
 
 
 
+if __name__ == '__main__':
 
+    game_ids_pulled, latest_game_pulled_date = get_game_ids_pulled()
 
-game_ids_pulled, latest_game_pulled_date = get_game_ids_pulled()
-game_header_w_standings_df, team_game_line_score_df,  error_dates_list = get_game_data(latest_game_pulled_date)
-game_ids = filter_and_write_game_data(game_header_w_standings_df, team_game_line_score_df, game_ids_pulled)
+    game_header_w_standings_df, team_game_line_score_df,  error_dates_list = get_game_data(latest_game_pulled_date)
 
-player_boxscore_advanced_stats_df, team_boxscore_stats_advanced_df = get_boxscore_advanced(game_ids)
+    game_ids = filter_and_write_game_data(game_header_w_standings_df, team_game_line_score_df, game_ids_pulled)
 
+    if len(game_ids) != 0:
+            
+        boxscore_traditional_player_df, boxscore_traditional_team_df = get_boxscore_traditional(game_ids)
+        write_boxscore_traditional_to_s3(boxscore_traditional_player_df, boxscore_traditional_team_df)
+    
+        player_boxscore_advanced_stats_df, team_boxscore_stats_advanced_df = get_boxscore_advanced(game_ids)
+        write_boxscore_advanced_to_s3(player_boxscore_advanced_stats_df, team_boxscore_stats_advanced_df)
 
-write_boxscore_advanced_to_s3(player_boxscore_advanced_stats_df, team_boxscore_stats_advanced_df)
-
-boxscore_traditional_player_df, boxscore_traditional_team_df = get_boxscore_traditional(game_ids)
-
+    else: 
+        print('No game IDs to be pulled')
 
