@@ -1,0 +1,6 @@
+artifact_location: s3://nbadk-model/models/team-game/experiments
+creation_time: 1702316997022
+experiment_id: '206715267433762781'
+last_update_time: 1702316997022
+lifecycle_stage: active
+name: team_game

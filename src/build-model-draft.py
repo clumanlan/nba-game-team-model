@@ -10,11 +10,14 @@ import awswrangler as wr
 import numpy as np
 import time
 import datetime as dt
+import mlflow
 
-# USE MAPE?
-# DOUBLE CHECK GAME HEADERS AND OTHERS FOR DUPES 
+# TODO: validate data :) create a baseline model, setup infrastrcutre for CI/CD to SAGEMAKER WITH MLFLOW
+# USE MAPE? we'll use a bunch of different metric values 
+
+# check player dfs for missing game ids 
+
 # FUNCTIONS ---------------------------------------
-
 
 def get_game_headers() -> tuple:
 
@@ -101,7 +104,6 @@ def get_player_dfs() -> tuple:
     return player_info_df, boxscore_trad_player_df, boxscore_adv_player_df
 
 
-
 def get_team_level_dfs() -> tuple:
     """
     Retrieve team level dataframes for the given game IDs.
@@ -141,21 +143,106 @@ def get_team_level_dfs() -> tuple:
     return boxscore_trad_team_df, boxscore_adv_team_df
 
 
-odds_path = "s3://nbadk-model/oddsshark/team_odds/nba_team_odds_historical.parquet"
-odds_data = wr.s3.read_parquet(
-        path=odds_path,
-        path_suffix=".parquet",
-        use_threads=True
-    )
+def get_odds_data():
+    odds_path = "s3://nbadk-model/oddsshark/team_odds/nba_team_odds_historical.parquet"
+
+    odds_data = wr.s3.read_parquet(
+            path=odds_path,
+            path_suffix=".parquet",
+            use_threads=True
+        )
+
+
+# check game ids,
+# baseline model is just rolling average, we just store models in s3 but keep tracking local
 
 
 
+game_headers_raw, game_home_away = get_game_headers()
 
-game_headers_df_processed_filtered, game_home_away = get_game_headers()
+game_headers_filtered = (
+    game_headers_raw[game_headers_raw['game_type'].isin(['Regular Season', 'Post Season', 'Play-In Tournament'])]
+    .drop(['HOME_TEAM_WINS', 'HOME_TEAM_LOSSES'], axis=1)
+)
 
-game_header_game_ids_complete = game_headers_df_processed_filtered.GAME_ID.unique()
+rel_game_ids = game_headers_filtered.GAME_ID.unique()
+
+
+game_headers_pivot = pd.melt(game_headers_filtered, id_vars=['GAME_ID','game_type', 'SEASON', 'GAME_DATE_EST'], value_vars=['HOME_TEAM_ID', 'VISITOR_TEAM_ID'], var_name='HOME_VISITOR', value_name='TEAM_ID')
+game_headers_pivot['HOME_VISITOR'] = game_headers_pivot['HOME_VISITOR'].replace({'HOME_TEAM_ID':'HOME', 'VISITOR_TEAM_ID':'VISITOR'})
+
+
 
 boxscore_trad_team_df, boxscore_adv_team_df = get_team_level_dfs()
+
+bxscore_trad_irrelevant_cols = ['TEAM_ABBREVIATION', 'TEAM_CITY']
+boxscore_trad_team_df_filtered = boxscore_trad_team_df.drop(bxscore_trad_irrelevant_cols, axis=1)
+
+adv_team_team_identity_cols = ['TEAM_NAME', 'TEAM_ABBREVIATION', 'TEAM_CITY','MIN']
+boxscore_adv_team_df_filtered = boxscore_adv_team_df.drop(adv_team_team_identity_cols, axis=1)
+
+
+
+# Setup Mlflow ------------------------------------------------
+## mlflow server --backend-store-uri sqlite:///mlflow.db 
+## --default-artifact-root mlruns/ 
+experiment_name = "team_game"
+#mlflow.create_experiment(experiment_name, artifact_location="s3://nbadk-model/models/team-game/experiments")
+mlflow.set_experiment(experiment_name)
+
+
+
+
+
+
+
+
+
+
+# what to name 
+A.set_index('key').join([B2, C2], how='inner').reset_index()
+
+
+
+boxscore_combined_trad = game_headers_df_processed_filtered.merge(boxscore_trad_team_df, left_on=['GAME_ID', 'HOME_TEAM_ID'], right_on=['GAME_ID', 'TEAM_ID'], how='left')
+
+boxscore_combined_adv = game_headers_df_processed_filtered.merge(boxscore_adv_team_df, left_on=['GAME_ID', 'HOME_TEAM_ID'], right_on=['GAME_ID', 'TEAM_ID'], how='left')
+
+boxscore_combined_trad[boxscore_combined_trad['PTS'].isnull()]['SEASON'].value_counts()
+
+missing_game_ids_trad = boxscore_combined_trad[boxscore_combined_trad['PTS'].isnull()]['GAME_ID'].unique()
+missing_game_df = game_headers_df_processed_filtered[game_headers_df_processed_filtered['GAME_ID'].isin(missing_game_ids_trad)]
+
+
+missing_game_ids_adv = boxscore_combined_adv[boxscore_combined_adv['PIE'].isnull()]['GAME_ID'].unique()
+
+len(missing_game_ids_trad)
+
+
+
+
+
+len(missing_game_ids_adv)
+
+
+boxscore_adv_error = get_boxscore_advanced(missing_game_ids_adv)
+boxscore_trad_error = get_boxscore_traditional(missing_game_ids_trad)
+
+boxscore_adv_error_remaining = get_boxscore_advanced(boxscore_adv_error)
+
+
+
+
+
+
+get_player_dfs()
+
+# need to check game IDS 
+
+
+
+# CHECK MISSING FUNCTIONS ---------------------------------------------
+
 
 trad_game_id_missing = [game_id for game_id in boxscore_trad_team_df.GAME_ID.unique() if game_id not in game_header_game_ids_complete]
 adv_game_id_missing = [game_id for game_id in boxscore_adv_team_df.GAME_ID.unique() if game_id not in game_header_game_ids_complete]
@@ -171,3 +258,5 @@ trad_missing_from_adv = [game_id for game_id in boxscore_trad_team_df.GAME_ID.un
 boxscore_adv_team_df = boxscore_adv_team_df.drop(['TEAM_NAME', 'TEAM_ABBREVIATION', 'TEAM_CITY', 'MIN'], axis=1)
 
 team_boxscore_combined = pd.merge(boxscore_trad_team_df, boxscore_adv_team_df, on=['GAME_ID', 'TEAM_ID'], how='outer')
+
+
