@@ -16,9 +16,10 @@ import time
 import datetime as dt
 import mlflow
 import plotly.express as px
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error,  r2_score
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from category_encoders import TargetEncoder
+from sklearn.model_selection import  cross_val_score
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
@@ -201,7 +202,6 @@ game_header_team_boxscore_combined = pd.merge(game_headers_filtered, team_boxsco
 
 # CREATE A REGULAR SEASON BASELINE MODEL --------------------------------------------------------------------------
 
-
 game_team_regular = (
     game_header_team_boxscore_combined[game_header_team_boxscore_combined['game_type']=='Regular Season']
     .assign(
@@ -233,6 +233,9 @@ baseline_mae = mean_absolute_error(actual, rolling_avg_five)
 
 
 
+# PROCESS FEATURES -----------------------------------------------------------
+
+
 # create a simple model first with year, rolling averages, and home and away
 
 # numeric feature processing --------------------------------------------------
@@ -262,7 +265,6 @@ cat_pipeline_low_card = Pipeline(steps=[
 
 
 # date feature processing ---------------------------------------------------------
-
 date_feats = ['dayofweek', 'dayofyear',  'is_leap_year', 'quarter', 'weekofyear', 'year']
 
 class DateTransformer(BaseEstimator, TransformerMixin):
@@ -307,52 +309,58 @@ pipeline = Pipeline(steps=[
 
 
 
+# Mlflow Tracking  ---------------------------------------------------
 
-# Mlflow Tracking  ------------------------------------------------
 
+# mlflow server --host 127.0.0.1 --port 5000 --backend-store-uri sqlite:///mlflow.db  --default-artifact-root mlruns/  --artifacts-destination s3://nbadk-model/models/team-game/experiments
 
-# mlflow server --host 127.0.0.1 --port 5000 --backend-store-uri sqlite:///mlflow.db   --artifacts-destination s3://nbadk-model/models/team-game/experiments
-# alternate source --default-artifact-root mlruns/ 
 local_server_uri = 'http://127.0.0.1:5000'
 mlflow.set_tracking_uri(local_server_uri)
 
 experiment_name = "team_game"
 
-mlflow.create_experiment(experiment_name, artifact_location="s3://nbadk-model/models/team-game/experiments")
+#mlflow.create_experiment(experiment_name, artifact_location="s3://nbadk-model/models/team-game/experiments")
 mlflow.set_experiment(experiment_name)
 
 with mlflow.start_run():
 
-    model_name_tag = "baseline_rolling_5_team_avg"
+    model_name_tag = "baseline_team_rolling_5_game_avg"
+    
+    mlflow.set_tag('mlflow.runName', model_name_tag) 
+    mlflow.set_tag("mlflow.note.content", "We determined that 5 games is where RMSE error levels out, so we filter out first 4 outcome obs going forward")
+    
+
+    train_filtered = game_team_regular_train.dropna(subset=['team_lagged_pts_rolling_5_mean']).reset_index(drop=True)
+
+    X_train = train_filtered[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
+    y_train = train_filtered['PTS']
 
     mlflow.log_param("model_name", model_name_tag)
-    #mlflow.log_param("features_used", ", ".join(X.columns))
+    #mlflow.log_param("features_used", ", ".join(X_train.columns))
     mlflow.log_param("features_used", "none")
     
 
 
-    cross_val_scores = cross_val_score(pipeline, X_train, y_train, cv=tscv)
-    cross_val_score_mean_sqaured_error = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_squared_error')
+    #cross_val_scores = cross_val_score(pipeline, X_train, y_train, cv=tscv)
+    #cross_val_score_mean_sqaured_error = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_squared_error')
 
     #pipeline.fit(X_train, y_train)
     #y_train_pred = pipeline.predict(X_train) 
     #adjusted_r2 = 1 - ( 1-r2 ) * (len(y_train) - 1 ) / ( len(y_train) - X_train.shape[1] - 1 )
     
-    mlflow.setcv_tag('mlflow.runName', model_name_tag) # set tag with run name so we can search for it later
-
-
     mlflow.log_metric("mse", baseline_mse)
     mlflow.log_metric("rmse", baseline_rmse)
     mlflow.log_metric("mae", baseline_mae)
+
+    mlflow.log_metric('cv_neg_mse', baseline_mse)
+    mlflow.log_metric('cv_rmse', baseline_rmse)
+
+
     #mlflow.log_metric('adjusted_r2', adjusted_r2)
-    #mlflow.log_metric('cross_val_score_avg', cross_val_scores.mean())
-    #mlflow.log_metric('cross_val_score_rmse', np.mean(np.sqrt(np.abs(cross_val_score_mean_sqaured_error))))
+    #mlflow.log_metric('cv_neg_mse', cross_val_scores.mean())
+    #mlflow.log_metric('cv_rmse', np.mean(np.sqrt(np.abs(cross_val_score_mean_sqaured_error))))
 
-    mlflow.log_metric('rmse', rmse)
-    mlflow.log_metric('mae', mae)
-    mlflow.log_metric('r2', r2)
-
-    mlflow.sklearn.log_model(pipeline, model_name_tag)
+    #mlflow.sklearn.log_model(pipeline, model_name_tag)
 
 
 
