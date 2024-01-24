@@ -16,10 +16,10 @@ import time
 import datetime as dt
 import mlflow
 import plotly.express as px
-from sklearn.metrics import mean_squared_error, mean_absolute_error,  r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error,  r2_score, make_scorer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from category_encoders import TargetEncoder
-from sklearn.model_selection import  cross_val_score
+from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
@@ -166,6 +166,24 @@ def get_odds_data():
             use_threads=True
         )
 
+def get_sec(time_str):
+    """Get seconds from time."""
+    if ':' in time_str:
+        if '.' in time_str:
+            time_str = time_str.replace('.000000', '')
+            m, s = time_str.split(':')
+            time_sec = int(m) *60 + int(s)
+        else:
+            m, s = time_str.split(':')
+            time_sec = int(m)*60 + int(s)
+    
+    if ':' not in time_str:
+        if time_str == 'None':
+            time_sec = 0
+        else: 
+            time_sec = int(time_str)*60
+
+    return time_sec
 
 # check game ids,
 # baseline model is just rolling average, we just store models in s3 but keep tracking local
@@ -205,7 +223,8 @@ game_header_team_boxscore_combined = pd.merge(game_headers_filtered, team_boxsco
 game_team_regular = (
     game_header_team_boxscore_combined[game_header_team_boxscore_combined['game_type']=='Regular Season']
     .assign(
-        TEAM_ID = lambda x: x['TEAM_ID'].astype(str)
+        TEAM_ID = lambda x: x['TEAM_ID'].astype(str),
+        SEC = lambda x: x['MIN'].apply(get_sec)
     )
     .sort_values(['GAME_DATE_EST', 'TEAM_ID'])
     .reset_index(drop=True)
@@ -213,6 +232,7 @@ game_team_regular = (
 
 game_team_regular_train = game_team_regular[game_team_regular['SEASON']<2019].copy()
 
+## rolling PTS lagged average -------------
 for i in range(1,6):
 
     ## accuracy flatlines at about 5 games out, with each game out happening there after only reducing by 0.1
@@ -230,6 +250,44 @@ actual = game_team_regular_five['PTS']
 baseline_mse = mean_squared_error(actual, rolling_avg_five)
 baseline_rmse = np.sqrt(mean_squared_error(actual, rolling_avg_five))
 baseline_mae = mean_absolute_error(actual, rolling_avg_five)
+
+
+# ADD STATIC CATEGORICAL FEATURES AND BASIC LAGGED ROLLING 5 GAME AVERAGE CONTINOUS FEATURE  -------------------------------------
+
+static_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR']
+lagged_num_cols = [ 'SEC', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A',
+       'FG3_PCT', 'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
+       'BLK', 'TO', 'PF', 'PTS', 'PLUS_MINUS', 'E_OFF_RATING', 'OFF_RATING',
+       'E_DEF_RATING', 'DEF_RATING', 'E_NET_RATING', 'NET_RATING', 'AST_PCT',
+       'AST_TOV', 'AST_RATIO', 'OREB_PCT', 'DREB_PCT', 'REB_PCT',
+       'E_TM_TOV_PCT', 'TM_TOV_PCT', 'EFG_PCT', 'TS_PCT', 'USG_PCT',
+       'E_USG_PCT', 'E_PACE', 'PACE', 'PACE_PER40', 'POSS', 'PIE']
+
+
+
+for col in lagged_num_cols:
+
+    for i in range(1,6):
+
+        ## accuracy flatlines at about 5 games out, with each game out happening there after only reducing by 0.1
+        mean_col_label = f'team_lagged_{col}_rolling_{i}_mean'
+        game_team_regular_train.loc[:,mean_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).mean())
+
+        median_col_label = f'team_lagged_{col}_rolling_{i}_median'
+        game_team_regular_train.loc[:,median_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).median())
+
+        std_col_label = f'team_lagged_{col}_rolling_{i}_std'
+        game_team_regular_train.loc[:,std_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).std())
+
+    i+=1
+    pct_complate = i/len(lagged_num_cols)
+    print("{:.2%}".format(pct_complate))
+
+
+
+
+
+
 
 
 
@@ -265,7 +323,7 @@ cat_pipeline_low_card = Pipeline(steps=[
 
 
 # date feature processing ---------------------------------------------------------
-date_feats = ['dayofweek', 'dayofyear',  'is_leap_year', 'quarter', 'weekofyear', 'year']
+date_feats = ['dayofweek', 'dayofyear',  'is_leap_year', 'quarter',  'year']
 
 class DateTransformer(BaseEstimator, TransformerMixin):
     def fit(self, x, y=None):
@@ -279,10 +337,10 @@ class DateTransformer(BaseEstimator, TransformerMixin):
         dayofyear= x.GAME_DATE_EST.dt.dayofyear
         is_leap_year =  x.GAME_DATE_EST.dt.is_leap_year
         quarter =  x.GAME_DATE_EST.dt.quarter
-        weekofyear = x.GAME_DATE_EST.dt.weekofyear
+        #weekofyear = x.GAME_DATE_EST.dt.weekofyear
         year = x.GAME_DATE_EST.dt.year
 
-        df_dt = pd.concat([dayofweek, dayofyear,  is_leap_year, quarter, weekofyear, year], axis=1)
+        df_dt = pd.concat([dayofweek, dayofyear,  is_leap_year, quarter,  year], axis=1)
 
         return df_dt
 
@@ -300,14 +358,8 @@ col_trans_pipeline = ColumnTransformer(
     ]
 )
 
-model = LinearRegression()
 
-pipeline = Pipeline(steps=[
-    ('preprocess', col_trans_pipeline),
-    ('model', model)
-])
-
-
+    
 
 # Mlflow Tracking  ---------------------------------------------------
 
@@ -324,10 +376,18 @@ mlflow.set_experiment(experiment_name)
 
 with mlflow.start_run():
 
-    model_name_tag = "baseline_team_rolling_5_game_avg"
+    model_name_tag = "rf_v1"
+        
+    model = RandomForestRegressor(random_state=32)
+
+    pipeline = Pipeline(steps=[
+        ('preprocess', col_trans_pipeline),
+        ('model', model)
+    ])
+
     
     mlflow.set_tag('mlflow.runName', model_name_tag) 
-    mlflow.set_tag("mlflow.note.content", "We determined that 5 games is where RMSE error levels out, so we filter out first 4 outcome obs going forward")
+    mlflow.set_tag("mlflow.note.content", "V1 linear regression with pts_lagged + home_visitor")
     
 
     train_filtered = game_team_regular_train.dropna(subset=['team_lagged_pts_rolling_5_mean']).reset_index(drop=True)
@@ -336,31 +396,34 @@ with mlflow.start_run():
     y_train = train_filtered['PTS']
 
     mlflow.log_param("model_name", model_name_tag)
-    #mlflow.log_param("features_used", ", ".join(X_train.columns))
-    mlflow.log_param("features_used", "none")
+    mlflow.log_param("features_used", ", ".join(X_train.columns))
     
 
-
-    #cross_val_scores = cross_val_score(pipeline, X_train, y_train, cv=tscv)
-    #cross_val_score_mean_sqaured_error = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_squared_error')
-
-    #pipeline.fit(X_train, y_train)
-    #y_train_pred = pipeline.predict(X_train) 
-    #adjusted_r2 = 1 - ( 1-r2 ) * (len(y_train) - 1 ) / ( len(y_train) - X_train.shape[1] - 1 )
+    pipeline.fit(X_train, y_train)
+    y_train_pred = pipeline.predict(X_train) 
     
-    mlflow.log_metric("mse", baseline_mse)
-    mlflow.log_metric("rmse", baseline_rmse)
-    mlflow.log_metric("mae", baseline_mae)
+    mse = mean_squared_error(y_train, y_train_pred)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(y_train, y_train_pred)
 
-    mlflow.log_metric('cv_neg_mse', baseline_mse)
-    mlflow.log_metric('cv_rmse', baseline_rmse)
+    tscv = TimeSeriesSplit(n_splits=5)
+
+    cross_val_scores_r2 = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring=make_scorer(r2_score))
+    cross_val_score_mse = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_squared_error')
+    cross_val_score_mae = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_absolute_error')
 
 
-    #mlflow.log_metric('adjusted_r2', adjusted_r2)
-    #mlflow.log_metric('cv_neg_mse', cross_val_scores.mean())
-    #mlflow.log_metric('cv_rmse', np.mean(np.sqrt(np.abs(cross_val_score_mean_sqaured_error))))
+    mlflow.log_metric("mse", mse)
+    mlflow.log_metric("rmse", rmse)
+    mlflow.log_metric("mae", mae)
 
-    #mlflow.sklearn.log_model(pipeline, model_name_tag)
+    mlflow.log_metric('cv_r2', cross_val_scores_r2.mean())
+    mlflow.log_metric('cv_neg_mse', cross_val_score_mse.mean())
+    mlflow.log_metric('cv_rmse', np.mean(np.sqrt(np.abs(cross_val_score_mse))))
+    mlflow.log_metric('cv_mae', cross_val_score_mae.mean())
+
+
+    mlflow.sklearn.log_model(pipeline, model_name_tag)
 
 
 
