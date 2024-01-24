@@ -24,6 +24,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
 
+pd.set_option('display.max_columns', None)
 
 # TODO: validate data :) create a baseline model, setup infrastrcutre for CI/CD to SAGEMAKER WITH MLFLOW, 
 ##     could use pydantic to set column types of data coming in
@@ -227,6 +228,7 @@ game_team_regular = (
         SEC = lambda x: x['MIN'].apply(get_sec)
     )
     .sort_values(['GAME_DATE_EST', 'TEAM_ID'])
+    .drop(['MIN'], axis=1)
     .reset_index(drop=True)
 )
 
@@ -265,27 +267,40 @@ lagged_num_cols = [ 'SEC', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A',
 
 
 
-for col in lagged_num_cols:
+loop_place=0
 
-    for i in range(1,6):
+for col in lagged_num_cols:
+    
+    temp_lagged_col_df = pd.DataFrame()
+
+    for i in range(2,6):
 
         ## accuracy flatlines at about 5 games out, with each game out happening there after only reducing by 0.1
+        lagged_col_label = f'team_lagged_{col}'
+        temp_lagged_col_df[lagged_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1))
+
         mean_col_label = f'team_lagged_{col}_rolling_{i}_mean'
-        game_team_regular_train.loc[:,mean_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).mean())
+        temp_lagged_col_df[mean_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).mean())
 
         median_col_label = f'team_lagged_{col}_rolling_{i}_median'
-        game_team_regular_train.loc[:,median_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).median())
+        temp_lagged_col_df[median_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).median())
 
         std_col_label = f'team_lagged_{col}_rolling_{i}_std'
-        game_team_regular_train.loc[:,std_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).std())
+        temp_lagged_col_df[std_col_label]  = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).std())
+    
+    game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
 
-    i+=1
-    pct_complate = i/len(lagged_num_cols)
+    loop_place+=1
+
+    pct_complate = loop_place/len(lagged_num_cols)
     print("{:.2%}".format(pct_complate))
 
+    del temp_lagged_col_df
 
 
 
+game_team_regular_train = game_team_regular_train.drop(lagged_num_cols, axis=1)
+game_team_regular_train = game_team_regular_train.drop(['MIN'], axis=1)
 
 
 
@@ -297,7 +312,8 @@ for col in lagged_num_cols:
 # create a simple model first with year, rolling averages, and home and away
 
 # numeric feature processing --------------------------------------------------
-rel_num_feats = ['SEASON'] + [col for col in game_team_regular_train.columns if 'pts_rolling' in col]
+rel_num_feats = game_team_regular_train.select_dtypes(include=np.number).columns
+
 
 num_pipeline = Pipeline(steps=[
     ('scale', StandardScaler())
@@ -376,9 +392,11 @@ mlflow.set_experiment(experiment_name)
 
 with mlflow.start_run():
 
-    model_name_tag = "rf_v1"
-        
-    model = RandomForestRegressor(random_state=32)
+    model_name_tag = "rf_v2"
+    
+    model = LinearRegression()
+    #model = RandomForestRegressor(random_state=32)
+    #model = xgb.XGBRegressor(random_state=32)
 
     pipeline = Pipeline(steps=[
         ('preprocess', col_trans_pipeline),
@@ -387,7 +405,7 @@ with mlflow.start_run():
 
     
     mlflow.set_tag('mlflow.runName', model_name_tag) 
-    mlflow.set_tag("mlflow.note.content", "V1 linear regression with pts_lagged + home_visitor")
+    mlflow.set_tag("mlflow.note.content", "V2 model has home_visitor + avg, std, median, lagged of all continous stats")
     
 
     train_filtered = game_team_regular_train.dropna(subset=['team_lagged_pts_rolling_5_mean']).reset_index(drop=True)
