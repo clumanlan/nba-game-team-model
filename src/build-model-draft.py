@@ -30,6 +30,12 @@ pd.set_option('display.max_columns', None)
 ##     could use pydantic to set column types of data coming in
 # USE MAPE? we'll use a bunch of different metric values 
 
+
+# just basically the way this flow works is you create a feature you trend it out, the question is two fold right:
+# # what features matter and over what period of time
+
+
+# much later date can bring in PLAYER DFS
 # check player dfs for missing game ids 
 
 # FUNCTIONS ---------------------------------------
@@ -234,42 +240,87 @@ game_team_regular = (
 
 game_team_regular_train = game_team_regular[game_team_regular['SEASON']<2019].copy()
 
-## rolling PTS lagged average -------------
-for i in range(1,6):
 
-    ## accuracy flatlines at about 5 games out, with each game out happening there after only reducing by 0.1
-    col_label = f'team_lagged_pts_rolling_{i}_mean'
-    game_team_regular_train.loc[:,col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['PTS'].transform(lambda x: x.shift(1).rolling(i, min_periods=i).mean())
+# CREATE ADDITIONAL STATS -------------------------------------------------------------------------
 
-    print(col_label)
+# to get allowed stats we create two data frames GAME_ID, TEAM_ID for HOME AND AWAY, then take home and join to away stats by GAME_ID 
+gr_train_home_base = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='HOME'][['TEAM_ID', 'GAME_ID']]
+gr_train_away_base = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='VISITOR'][['TEAM_ID', 'GAME_ID']]
 
 
+non_rel_opposing_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR', 'TEAM_ID', 'TEAM_NAME', 'SEC']
 
-game_team_regular_five = game_team_regular_train[~game_team_regular_train['team_lagged_pts_rolling_5_mean'].isnull()]
-rolling_avg_five = game_team_regular_five['team_lagged_pts_rolling_5_mean']
-actual = game_team_regular_five['PTS']
-
-baseline_mse = mean_squared_error(actual, rolling_avg_five)
-baseline_rmse = np.sqrt(mean_squared_error(actual, rolling_avg_five))
-baseline_mae = mean_absolute_error(actual, rolling_avg_five)
+gr_train_home_stats = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='HOME'].drop(non_rel_opposing_cols, axis=1)
+gr_train_away_stats = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='VISITOR'].drop(non_rel_opposing_cols, axis=1)
 
 
-# ADD STATIC CATEGORICAL FEATURES AND BASIC LAGGED ROLLING 5 GAME AVERAGE CONTINOUS FEATURE  -------------------------------------
+gr_train_home = pd.merge(gr_train_home_base, gr_train_away_stats, on='GAME_ID')
+gr_train_home.columns = [f"{col}_allowed_opposing" for col in gr_train_home.columns]
+gr_train_home = gr_train_home.rename({'TEAM_ID_allowed_opposing': 'TEAM_ID', 'GAME_ID_allowed_opposing': 'GAME_ID'}, axis=1)
+
+
+
+gr_train_away = pd.merge(gr_train_away_base, gr_train_home_stats, on='GAME_ID')
+gr_train_away.columns = [f"{col}_allowed_opposing" for col in gr_train_away.columns]
+gr_train_away = gr_train_home.rename({'TEAM_ID_allowed_opposing': 'TEAM_ID', 'GAME_ID_allowed_opposing': 'GAME_ID'}, axis=1)
+
+gr_train_opposing = pd.concat([gr_train_away, gr_train_home])
+
+game_team_regular_train = pd.merge(game_team_regular_train, gr_train_opposing, how='left', on=['TEAM_ID', 'GAME_ID'])
+
+
+# the problem is i don't understand some of these stats and how they affect things
+# so i should see what features are importnat and if removing some of these that i don't understand affects performance
+# 
+
+# ranking points allowed and points made
+
+# ranking of across the season makes sense and honestly last 10 games,
+
+
+# i guess in theory you have short trend and long trend, so season would be long trend,
+
+# we created this now
+
+# now think through how XGBOOST can train faster as a prosimity 
+
+# rolling counts of categorical/date columns: how many days since last game, how many home and away games, 
+
+
+
+# so we trend numerical columns that seems fine i just need to double check
+## then we need to create functions to trend categorical columns
+
+## see if perofrmance improves and either way i need to figure out how to whiteboard and think of features that will actually have an impact
+## honestly i'd be pretty at peace with 3-5 rmse off 
+
+
+## i really just needa few days to figure this out hten deploy whatever i land on 
+
+
+# TIME TREND: WE CREATE TWO TYPES: SHORT AND LONG FOR ANY FEATURES WE CREATE ---------------------------------------------
 
 static_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR']
-lagged_num_cols = [ 'SEC', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A',
+lagged_num_cols = ['PTS', 'SEC', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A',
        'FG3_PCT', 'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
-       'BLK', 'TO', 'PF', 'PTS', 'PLUS_MINUS', 'E_OFF_RATING', 'OFF_RATING',
+       'BLK', 'TO', 'PF',  'PLUS_MINUS', 'E_OFF_RATING', 'OFF_RATING',
        'E_DEF_RATING', 'DEF_RATING', 'E_NET_RATING', 'NET_RATING', 'AST_PCT',
-       'AST_TOV', 'AST_RATIO', 'OREB_PCT', 'DREB_PCT', 'REB_PCT',
-       'E_TM_TOV_PCT', 'TM_TOV_PCT', 'EFG_PCT', 'TS_PCT', 'USG_PCT',
+       'AST_TOV', 'AST_RATIO', 'E_TM_TOV_PCT', 'TM_TOV_PCT', 'EFG_PCT', 'TS_PCT', 'USG_PCT',
        'E_USG_PCT', 'E_PACE', 'PACE', 'PACE_PER40', 'POSS', 'PIE']
 
+lagged_num_cols_opposing = [f"{col}_allowed_opposing" for col in lagged_num_cols]
+
+contains_sig_nulls = ['OREB_PCT', 'DREB_PCT', 'REB_PCT']
+
+lagged_num_cols_complete = lagged_num_cols + lagged_num_cols_opposing
 
 
+
+# SHORT TREND ------------------------------------------------------------------------------------------
+## num columns
 loop_place=0
 
-for col in lagged_num_cols:
+for col in lagged_num_cols_complete:
     
     temp_lagged_col_df = pd.DataFrame()
 
@@ -297,12 +348,57 @@ for col in lagged_num_cols:
 
     del temp_lagged_col_df
 
+## cat cols 
+# this would just be a count of it over a time period of time 
 
 
-game_team_regular_train = game_team_regular_train.drop(lagged_num_cols, axis=1)
-game_team_regular_train = game_team_regular_train.drop(['MIN'], axis=1)
+# LONG TREND WHOLE SEASON ROLLING -------------------------------------------------------------------------------
+loop_place=0
+
+for col in lagged_num_cols_complete:
+    
+    temp_lagged_col_df = pd.DataFrame()
+
+    mean_col_label = f'team_lagged_{col}_rolling_season_mean'
+    temp_lagged_col_df[mean_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=i).mean())
+
+    median_col_label = f'team_lagged_{col}_rolling_season_median'
+    temp_lagged_col_df[median_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=i).median())
+
+    std_col_label = f'team_lagged_{col}_rolling_season_std'
+    temp_lagged_col_df[std_col_label]  = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=i).std())
+    
+    game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
+
+    loop_place+=1
+
+    pct_complate = loop_place/len(lagged_num_cols)
+    print("{:.2%}".format(pct_complate))
+
+    del temp_lagged_col_df
 
 
+
+
+# USE LAGGED FEATS TO CREATE RANKINGS: OFFENSE AND DEFENSE (Which is just opposing)
+
+train_filtered = game_team_regular_train.dropna(subset=['team_lagged_pts_rolling_5_mean']).reset_index(drop=True)
+
+game_team_regular_train = game_team_regular_train.drop(lagged_num_cols + contains_sig_nulls, axis=1)
+
+
+
+# BASELINE MODEL -------------------------------------------------------------
+
+## accuracy flatlines at about 5 games out, with each game out happening there after only reducing by 0.1
+## that being said this is for the baseline model with just rolling averages of target variable and no other features + interactions 
+
+rolling_avg_five = train_filtered['team_lagged_pts_rolling_5_mean']
+actual = train_filtered['PTS']
+
+baseline_mse = mean_squared_error(actual, rolling_avg_five)
+baseline_rmse = np.sqrt(mean_squared_error(actual, rolling_avg_five))
+baseline_mae = mean_absolute_error(actual, rolling_avg_five)
 
 
 
@@ -312,8 +408,8 @@ game_team_regular_train = game_team_regular_train.drop(['MIN'], axis=1)
 # create a simple model first with year, rolling averages, and home and away
 
 # numeric feature processing --------------------------------------------------
-rel_num_feats = game_team_regular_train.select_dtypes(include=np.number).columns
-
+rel_num_feats = game_team_regular_train.select_dtypes(include=np.number).columns.tolist()
+rel_num_feats.remove('PTS')
 
 num_pipeline = Pipeline(steps=[
     ('scale', StandardScaler())
@@ -325,9 +421,9 @@ num_pipeline = Pipeline(steps=[
 cat_cols_high_card = ['PLAYER_ID', 'TEAM_ID']
 
 cat_pipeline_high_card = Pipeline(steps=[
-    ('encoder', TargetEncoder(smoothing=2))
 ])
 
+#    ('encoder', TargetEncoder(smoothing=2))
 
 rel_cat_feats_low_card = ['HOME_VISITOR']
 
@@ -374,9 +470,6 @@ col_trans_pipeline = ColumnTransformer(
     ]
 )
 
-
-    
-
 # Mlflow Tracking  ---------------------------------------------------
 
 
@@ -392,11 +485,13 @@ mlflow.set_experiment(experiment_name)
 
 with mlflow.start_run():
 
-    model_name_tag = "rf_v2"
+
+    #mlflow.sklearn.autolog() # need to check out what this records
+    model_name_tag = "xgb_v2"
     
-    model = LinearRegression()
-    #model = RandomForestRegressor(random_state=32)
-    #model = xgb.XGBRegressor(random_state=32)
+    #model = LinearRegression()
+    #model = RandomForestRegressor(n_estimators=8, random_state=32) # simple random forest since it takes so long to train
+    model = xgb.XGBRegressor(random_state=32)
 
     pipeline = Pipeline(steps=[
         ('preprocess', col_trans_pipeline),
@@ -407,14 +502,11 @@ with mlflow.start_run():
     mlflow.set_tag('mlflow.runName', model_name_tag) 
     mlflow.set_tag("mlflow.note.content", "V2 model has home_visitor + avg, std, median, lagged of all continous stats")
     
-
-    train_filtered = game_team_regular_train.dropna(subset=['team_lagged_pts_rolling_5_mean']).reset_index(drop=True)
+    
 
     X_train = train_filtered[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
     y_train = train_filtered['PTS']
 
-    mlflow.log_param("model_name", model_name_tag)
-    mlflow.log_param("features_used", ", ".join(X_train.columns))
     
 
     pipeline.fit(X_train, y_train)
@@ -448,6 +540,22 @@ with mlflow.start_run():
 
 
 
+cross_val_score_mse.mean()
+ np.mean(np.sqrt(np.abs(cross_val_score_mse)))
+
+train_filtered = game_team_regular_train.dropna(subset=['team_lagged_pts_rolling_5_mean']).reset_index(drop=True)
+
+X_train = train_filtered[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
+y_train = train_filtered['PTS']
+
+mlflow.log_param("model_name", model_name_tag)
+mlflow.log_param("features_used", ", ".join(X_train.columns))
 
 
-   
+pipeline.fit(X_train, y_train)
+y_train_pred = pipeline.predict(X_train) 
+X_train.isnull().sum()
+
+columns_with_nulls = X_train.columns[X_train.isnull().any()]
+
+game_team_regular_train[['TEAM_ID'] + columns_with_nulls.tolist()]
