@@ -248,7 +248,7 @@ gr_train_home_base = game_team_regular_train[game_team_regular_train['HOME_VISIT
 gr_train_away_base = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='VISITOR'][['TEAM_ID', 'GAME_ID']]
 
 
-non_rel_opposing_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR', 'TEAM_ID', 'TEAM_NAME', 'SEC']
+non_rel_opposing_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR', 'TEAM_ID', 'TEAM_NAME']
 
 gr_train_home_stats = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='HOME'].drop(non_rel_opposing_cols, axis=1)
 gr_train_away_stats = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='VISITOR'].drop(non_rel_opposing_cols, axis=1)
@@ -267,7 +267,6 @@ gr_train_away = gr_train_home.rename({'TEAM_ID_allowed_opposing': 'TEAM_ID', 'GA
 gr_train_opposing = pd.concat([gr_train_away, gr_train_home])
 
 game_team_regular_train = pd.merge(game_team_regular_train, gr_train_opposing, how='left', on=['TEAM_ID', 'GAME_ID'])
-
 
 # the problem is i don't understand some of these stats and how they affect things
 # so i should see what features are importnat and if removing some of these that i don't understand affects performance
@@ -317,7 +316,8 @@ lagged_num_cols_complete = lagged_num_cols + lagged_num_cols_opposing
 
 
 # SHORT TREND ------------------------------------------------------------------------------------------
-## num columns
+
+## num feats trend -----------
 loop_place=0
 
 for col in lagged_num_cols_complete:
@@ -343,16 +343,37 @@ for col in lagged_num_cols_complete:
 
     loop_place+=1
 
-    pct_complate = loop_place/len(lagged_num_cols)
+    pct_complate = loop_place/len(lagged_num_cols_complete)
     print("{:.2%}".format(pct_complate))
 
     del temp_lagged_col_df
 
-## cat cols 
-# this would just be a count of it over a time period of time 
+## cat feats trend -----------
+# this would just be a count of it over a time period of daysso i guess it would be: 5, 7, 15, 30
+
+
+### NEED TO SWTICH THIS TO DAY WINDOWS 
+
+## feature importance  
+
+
+## single variable
+temp_lagged_col_df[mean_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).count())
+
+
+## count multi variable? like home-visitor
+
+
+
+
+## days since last game played
+## count of games, counte of home_visitor games, 
+
 
 
 # LONG TREND WHOLE SEASON ROLLING -------------------------------------------------------------------------------
+
+## num feats trend ---------------------------
 loop_place=0
 
 for col in lagged_num_cols_complete:
@@ -379,12 +400,19 @@ for col in lagged_num_cols_complete:
 
 
 
+## cat feats trend ---------------------------
+
+
 
 # USE LAGGED FEATS TO CREATE RANKINGS: OFFENSE AND DEFENSE (Which is just opposing)
+## you create rankings of differnt things which is rather interesting 
 
-train_filtered = game_team_regular_train.dropna(subset=['team_lagged_pts_rolling_5_mean']).reset_index(drop=True)
 
-game_team_regular_train = game_team_regular_train.drop(lagged_num_cols + contains_sig_nulls, axis=1)
+game_team_regular_train = game_team_regular_train.drop(lagged_num_cols_complete + contains_sig_nulls, axis=1)
+
+train_filtered = game_team_regular_train.dropna(subset=['team_lagged_PTS_rolling_5_mean']).reset_index(drop=True)
+
+train_filtered
 
 
 
