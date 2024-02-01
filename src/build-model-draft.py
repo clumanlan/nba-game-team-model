@@ -238,6 +238,8 @@ game_team_regular = (
     .reset_index(drop=True)
 )
 
+
+
 game_team_regular_train = game_team_regular[game_team_regular['SEASON']<2019].copy()
 
 
@@ -259,16 +261,17 @@ gr_train_home.columns = [f"{col}_allowed_opposing" for col in gr_train_home.colu
 gr_train_home = gr_train_home.rename({'TEAM_ID_allowed_opposing': 'TEAM_ID', 'GAME_ID_allowed_opposing': 'GAME_ID'}, axis=1)
 
 
-
 gr_train_away = pd.merge(gr_train_away_base, gr_train_home_stats, on='GAME_ID')
 gr_train_away.columns = [f"{col}_allowed_opposing" for col in gr_train_away.columns]
-gr_train_away = gr_train_home.rename({'TEAM_ID_allowed_opposing': 'TEAM_ID', 'GAME_ID_allowed_opposing': 'GAME_ID'}, axis=1)
+gr_train_away = gr_train_away.rename({'TEAM_ID_allowed_opposing': 'TEAM_ID', 'GAME_ID_allowed_opposing': 'GAME_ID'}, axis=1)
+
 
 gr_train_opposing = pd.concat([gr_train_away, gr_train_home])
 
+
 game_team_regular_train = pd.merge(game_team_regular_train, gr_train_opposing, how='left', on=['TEAM_ID', 'GAME_ID'])
 
-# the problem is i don't understand some of these stats and how they affect things
+# the problem is i don't understand some of these stats and how they affect things: make a basic decision tree!
 # so i should see what features are importnat and if removing some of these that i don't understand affects performance
 # 
 
@@ -277,13 +280,9 @@ game_team_regular_train = pd.merge(game_team_regular_train, gr_train_opposing, h
 # ranking of across the season makes sense and honestly last 10 games,
 
 
-# i guess in theory you have short trend and long trend, so season would be long trend,
-
-# we created this now
 
 # now think through how XGBOOST can train faster as a prosimity 
-
-# rolling counts of categorical/date columns: how many days since last game, how many home and away games, 
+# we've thought through this just first create a single decision tree to see output then create train w random sample records 
 
 
 
@@ -348,26 +347,44 @@ for col in lagged_num_cols_complete:
 
     del temp_lagged_col_df
 
-## cat feats trend -----------
-# this would just be a count of it over a time period of daysso i guess it would be: 5, 7, 15, 30
 
 
-### NEED TO SWTICH THIS TO DAY WINDOWS 
-
-## feature importance  
-
-
-## single variable
-temp_lagged_col_df[mean_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).count())
+## cat feats trend --------------
+lagged_cat_cols = ['HOME_VISITOR']
 
 
-## count multi variable? like home-visitor
+game_team_regular_train = game_team_regular_train.set_index('GAME_DATE_EST')
+game_team_regular_train['home'] = np.where(game_team_regular_train['HOME_VISITOR']=='HOME', 1, 0)
+game_team_regular_train['away'] = np.where(game_team_regular_train['HOME_VISITOR']=='VISITOR', 1, 0)
 
 
+window_size = ['7D', '14D', '30D']
+
+loop_place = 0
+for window in window_size:
+
+    temp_lagged_cat_col_df = pd.DataFrame()
+
+    temp_lagged_cat_col_df[f'game_count_{window}'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['GAME_ID'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).count())
 
 
-## days since last game played
-## count of games, counte of home_visitor games, 
+    temp_lagged_cat_col_df[f'home_game_count_{window}'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['home'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
+
+
+    temp_lagged_cat_col_df[f'away_game_count_{window}'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['away'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
+
+    temp_lagged_cat_col_df = temp_lagged_cat_col_df.fillna(0)
+
+    game_team_regular_train = pd.concat([game_team_regular_train,temp_lagged_cat_col_df], axis=1)
+
+    del temp_lagged_cat_col_df
+
+    loop_place+=1
+    pct_complate = loop_place/len(window_size)
+    print("{:.2%}".format(pct_complate))
+
+
+game_team_regular_train = game_team_regular_train.reset_index()
 
 
 
@@ -393,26 +410,48 @@ for col in lagged_num_cols_complete:
 
     loop_place+=1
 
-    pct_complate = loop_place/len(lagged_num_cols)
+    pct_complate = loop_place/len(lagged_num_cols_complete)
     print("{:.2%}".format(pct_complate))
 
     del temp_lagged_col_df
 
 
 
+
 ## cat feats trend ---------------------------
+temp_lagged_cat_col_df = pd.DataFrame()
+
+temp_lagged_cat_col_df['days_since_last_game'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['GAME_DATE_EST'].diff().dt.days
+
+temp_lagged_cat_col_df[f'game_count_season'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['GAME_ID'].transform(lambda x: x.shift(1).rolling(window=100, min_periods=1).count())
 
 
+temp_lagged_cat_col_df[f'home_game_count_season'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['home'].transform(lambda x: x.shift(1).rolling(window=100, min_periods=1).sum())
+
+
+temp_lagged_cat_col_df[f'away_game_count_season'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['away'].transform(lambda x: x.shift(1).rolling(window=100, min_periods=1).sum())
+
+temp_lagged_cat_col_df = temp_lagged_cat_col_df.fillna(0)
+
+game_team_regular_train = pd.concat([game_team_regular_train,temp_lagged_cat_col_df], axis=1)
+
+del temp_lagged_cat_col_df
 
 # USE LAGGED FEATS TO CREATE RANKINGS: OFFENSE AND DEFENSE (Which is just opposing)
 ## you create rankings of differnt things which is rather interesting 
 
 
-game_team_regular_train = game_team_regular_train.drop(lagged_num_cols_complete + contains_sig_nulls, axis=1)
+
+game_team_regular_train[(game_team_regular_train['TEAM_ID']=='1610612739') & (game_team_regular_train['SEASON']==2018)][['GAME_DATE_EST', 'days_since_last_game', 'TEAM_ID','game_count_7D','home_game_count_7D', 'away_game_count_7D']]
+
+
+
+lagged_num_cols_complete.remove('PTS')
+
+game_team_regular_train = game_team_regular_train.drop(lagged_num_cols_complete + contains_sig_nulls + ['home','away'], axis=1)
 
 train_filtered = game_team_regular_train.dropna(subset=['team_lagged_PTS_rolling_5_mean']).reset_index(drop=True)
 
-train_filtered
 
 
 
@@ -431,7 +470,6 @@ baseline_mae = mean_absolute_error(actual, rolling_avg_five)
 
 
 # PROCESS FEATURES -----------------------------------------------------------
-
 
 # create a simple model first with year, rolling averages, and home and away
 
@@ -497,6 +535,9 @@ col_trans_pipeline = ColumnTransformer(
         ('cat_low', cat_pipeline_low_card, rel_cat_feats_low_card)
     ]
 )
+
+# SHOW 
+
 
 # Mlflow Tracking  ---------------------------------------------------
 
