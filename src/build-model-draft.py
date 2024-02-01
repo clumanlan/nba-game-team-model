@@ -442,16 +442,18 @@ del temp_lagged_cat_col_df
 
 
 
-game_team_regular_train[(game_team_regular_train['TEAM_ID']=='1610612739') & (game_team_regular_train['SEASON']==2018)][['GAME_DATE_EST', 'days_since_last_game', 'TEAM_ID','game_count_7D','home_game_count_7D', 'away_game_count_7D']]
-
-
-
 lagged_num_cols_complete.remove('PTS')
 
 game_team_regular_train = game_team_regular_train.drop(lagged_num_cols_complete + contains_sig_nulls + ['home','away'], axis=1)
 
-train_filtered = game_team_regular_train.dropna(subset=['team_lagged_PTS_rolling_5_mean']).reset_index(drop=True)
 
+['OREB_PCT_allowed_opposing', ]
+game_team_regular_train_filtered = game_team_regular_train.dropna(subset=['team_lagged_PTS_rolling_5_mean']).reset_index(drop=True)
+
+
+
+
+game_team_regular_train[(game_team_regular_train['TEAM_ID']=='1610612739') & (game_team_regular_train['SEASON']==2018)][['GAME_DATE_EST', 'days_since_last_game', 'TEAM_ID','game_count_7D','home_game_count_7D', 'away_game_count_7D']]
 
 
 
@@ -460,8 +462,8 @@ train_filtered = game_team_regular_train.dropna(subset=['team_lagged_PTS_rolling
 ## accuracy flatlines at about 5 games out, with each game out happening there after only reducing by 0.1
 ## that being said this is for the baseline model with just rolling averages of target variable and no other features + interactions 
 
-rolling_avg_five = train_filtered['team_lagged_pts_rolling_5_mean']
-actual = train_filtered['PTS']
+rolling_avg_five = game_team_regular_train_filtered['team_lagged_PTS_rolling_5_mean']
+actual = game_team_regular_train_filtered['PTS']
 
 baseline_mse = mean_squared_error(actual, rolling_avg_five)
 baseline_rmse = np.sqrt(mean_squared_error(actual, rolling_avg_five))
@@ -474,7 +476,7 @@ baseline_mae = mean_absolute_error(actual, rolling_avg_five)
 # create a simple model first with year, rolling averages, and home and away
 
 # numeric feature processing --------------------------------------------------
-rel_num_feats = game_team_regular_train.select_dtypes(include=np.number).columns.tolist()
+rel_num_feats = game_team_regular_train_filtered.select_dtypes(include=np.number).columns.tolist()
 rel_num_feats.remove('PTS')
 
 num_pipeline = Pipeline(steps=[
@@ -536,7 +538,28 @@ col_trans_pipeline = ColumnTransformer(
     ]
 )
 
-# SHOW 
+
+
+
+X_train = game_team_regular_train_filtered[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
+y_train = game_team_regular_train_filtered['PTS']
+
+
+# TRY ON A SINGLE TREE AND SEE WHAT IT LOOKS LIKE ------------------------
+
+single_tree = RandomForestRegressor(n_estimators=1, max_depth=3,
+                          bootstrap=False, n_jobs=-1)
+
+
+single_tree_pipeline = Pipeline(steps=[
+    ('preprocess', col_trans_pipeline),
+    ('model', single_tree)
+])
+
+single_tree_pipeline.fit(X_train, y_train)
+X_train.isnull().sum()
+
+
 
 
 # Mlflow Tracking  ---------------------------------------------------
