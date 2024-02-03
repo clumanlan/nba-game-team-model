@@ -250,7 +250,8 @@ gr_train_home_base = game_team_regular_train[game_team_regular_train['HOME_VISIT
 gr_train_away_base = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='VISITOR'][['TEAM_ID', 'GAME_ID']]
 
 
-non_rel_opposing_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR', 'TEAM_ID', 'TEAM_NAME']
+non_rel_opposing_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR', 'TEAM_ID', 'TEAM_NAME', 'OREB_PCT'
+                         'DREB_PCT', 'REB_PCT']
 
 gr_train_home_stats = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='HOME'].drop(non_rel_opposing_cols, axis=1)
 gr_train_away_stats = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='VISITOR'].drop(non_rel_opposing_cols, axis=1)
@@ -447,7 +448,6 @@ lagged_num_cols_complete.remove('PTS')
 game_team_regular_train = game_team_regular_train.drop(lagged_num_cols_complete + contains_sig_nulls + ['home','away'], axis=1)
 
 
-['OREB_PCT_allowed_opposing', ]
 game_team_regular_train_filtered = game_team_regular_train.dropna(subset=['team_lagged_PTS_rolling_5_mean']).reset_index(drop=True)
 
 
@@ -538,18 +538,18 @@ col_trans_pipeline = ColumnTransformer(
     ]
 )
 
+# take x_train dataframe and from that take a random sample
 
+train_sample = game_team_regular_train_filtered.sample(20000).reset_index(keep=False)
 
+X_train = train_sample[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
+y_train =  train_sample['PTS']
 
-X_train = game_team_regular_train_filtered[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
-y_train = game_team_regular_train_filtered['PTS']
+# TRY ON A SINGLE TREE WITH VARYING DEPTHS TO SEE WHAT IT LOOKS LIKE ----------------------------
+from sklearn import tree
 
-
-# TRY ON A SINGLE TREE AND SEE WHAT IT LOOKS LIKE ------------------------
-
-single_tree = RandomForestRegressor(n_estimators=1, max_depth=3,
+single_tree = RandomForestRegressor(n_estimators=1, max_depth=6,
                           bootstrap=False, n_jobs=-1)
-
 
 single_tree_pipeline = Pipeline(steps=[
     ('preprocess', col_trans_pipeline),
@@ -557,8 +557,21 @@ single_tree_pipeline = Pipeline(steps=[
 ])
 
 single_tree_pipeline.fit(X_train, y_train)
-X_train.isnull().sum()
 
+y_train_pred = single_tree_pipeline.predict(X_train)
+r2_score(y_train, y_train_pred)
+
+
+num_feats = single_tree_pipeline.named_steps['preprocess'].transformers_[1][2]
+cat_feats = single_tree_pipeline.named_steps['preprocess'].transformers_[2][1].named_steps['encoder'].get_feature_names_out().tolist()
+
+feat_names = date_feats + num_feats + cat_feats
+
+tree.plot_tree(single_tree_pipeline['model'][0],
+                feature_names=feat_names,
+                filled=True,
+                rounded=True,
+                fontsize=6)
 
 
 
@@ -581,9 +594,9 @@ with mlflow.start_run():
     #mlflow.sklearn.autolog() # need to check out what this records
     model_name_tag = "xgb_v2"
     
-    #model = LinearRegression()
-    #model = RandomForestRegressor(n_estimators=8, random_state=32) # simple random forest since it takes so long to train
-    model = xgb.XGBRegressor(random_state=32)
+    model = LinearRegression()
+    #model = RandomForestRegressor(random_state=32, n_jobs=-1) # simple random forest since it takes so long to train
+    #model = xgb.XGBRegressor(random_state=32)
 
     pipeline = Pipeline(steps=[
         ('preprocess', col_trans_pipeline),
@@ -592,13 +605,7 @@ with mlflow.start_run():
 
     
     mlflow.set_tag('mlflow.runName', model_name_tag) 
-    mlflow.set_tag("mlflow.note.content", "V2 model has home_visitor + avg, std, median, lagged of all continous stats")
-    
-    
-
-    X_train = train_filtered[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
-    y_train = train_filtered['PTS']
-
+    mlflow.set_tag("mlflow.note.content", "V3 model add opposing teams statss")
     
 
     pipeline.fit(X_train, y_train)
@@ -610,19 +617,10 @@ with mlflow.start_run():
 
     tscv = TimeSeriesSplit(n_splits=5)
 
-    cross_val_scores_r2 = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring=make_scorer(r2_score))
-    cross_val_score_mse = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_squared_error')
-    cross_val_score_mae = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_absolute_error')
-
-
     mlflow.log_metric("mse", mse)
     mlflow.log_metric("rmse", rmse)
     mlflow.log_metric("mae", mae)
 
-    mlflow.log_metric('cv_r2', cross_val_scores_r2.mean())
-    mlflow.log_metric('cv_neg_mse', cross_val_score_mse.mean())
-    mlflow.log_metric('cv_rmse', np.mean(np.sqrt(np.abs(cross_val_score_mse))))
-    mlflow.log_metric('cv_mae', cross_val_score_mae.mean())
 
 
     mlflow.sklearn.log_model(pipeline, model_name_tag)
@@ -630,24 +628,14 @@ with mlflow.start_run():
 
 
 
+# we'll save cross validation for the final steps here ------------------------
 
 
-cross_val_score_mse.mean()
- np.mean(np.sqrt(np.abs(cross_val_score_mse)))
+cross_val_scores_r2 = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring=make_scorer(r2_score))
+cross_val_score_mse = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_squared_error')
+cross_val_score_mae = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_absolute_error')
 
-train_filtered = game_team_regular_train.dropna(subset=['team_lagged_pts_rolling_5_mean']).reset_index(drop=True)
-
-X_train = train_filtered[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
-y_train = train_filtered['PTS']
-
-mlflow.log_param("model_name", model_name_tag)
-mlflow.log_param("features_used", ", ".join(X_train.columns))
-
-
-pipeline.fit(X_train, y_train)
-y_train_pred = pipeline.predict(X_train) 
-X_train.isnull().sum()
-
-columns_with_nulls = X_train.columns[X_train.isnull().any()]
-
-game_team_regular_train[['TEAM_ID'] + columns_with_nulls.tolist()]
+# mlflow.log_metric('cv_r2', cross_val_scores_r2.mean())
+# mlflow.log_metric('cv_neg_mse', cross_val_score_mse.mean())
+# mlflow.log_metric('cv_rmse', np.mean(np.sqrt(np.abs(cross_val_score_mse))))
+# mlflow.log_metric('cv_mae', cross_val_score_mae.mean())
