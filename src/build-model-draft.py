@@ -192,10 +192,6 @@ def get_sec(time_str):
 
     return time_sec
 
-# check game ids,
-# baseline model is just rolling average, we just store models in s3 but keep tracking local
-
-
 
 game_headers_raw, game_home_away = get_game_headers()
 
@@ -225,7 +221,7 @@ team_boxscore_combined = team_boxscore_combined[~team_boxscore_combined['GAME_ID
 game_header_team_boxscore_combined = pd.merge(game_headers_filtered, team_boxscore_combined,  on=['GAME_ID', 'TEAM_ID'], how='inner')
 
 
-# CREATE A REGULAR SEASON BASELINE MODEL --------------------------------------------------------------------------
+# CREATE BASEIC FEATS AND SPLIT INTO A TRAINING DATAFRAME --------------------------------------------------------------------------
 
 game_team_regular = (
     game_header_team_boxscore_combined[game_header_team_boxscore_combined['game_type']=='Regular Season']
@@ -243,14 +239,14 @@ game_team_regular = (
 game_team_regular_train = game_team_regular[game_team_regular['SEASON']<2019].copy()
 
 
-# CREATE ADDITIONAL STATS -------------------------------------------------------------------------
+# ADD OPPOSING TEAM STATS (DEFENSIVE PERFORMANCE) -------------------------------------------------------------------------
 
 # to get allowed stats we create two data frames GAME_ID, TEAM_ID for HOME AND AWAY, then take home and join to away stats by GAME_ID 
 gr_train_home_base = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='HOME'][['TEAM_ID', 'GAME_ID']]
 gr_train_away_base = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='VISITOR'][['TEAM_ID', 'GAME_ID']]
 
 
-non_rel_opposing_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR', 'TEAM_ID', 'TEAM_NAME', 'OREB_PCT'
+non_rel_opposing_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR', 'TEAM_ID', 'TEAM_NAME', 'OREB_PCT',
                          'DREB_PCT', 'REB_PCT']
 
 gr_train_home_stats = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='HOME'].drop(non_rel_opposing_cols, axis=1)
@@ -276,29 +272,17 @@ game_team_regular_train = pd.merge(game_team_regular_train, gr_train_opposing, h
 # so i should see what features are importnat and if removing some of these that i don't understand affects performance
 # 
 
-# ranking points allowed and points made
 
-# ranking of across the season makes sense and honestly last 10 games,
-
-
-
-# now think through how XGBOOST can train faster as a prosimity 
-# we've thought through this just first create a single decision tree to see output then create train w random sample records 
+# ranking points allowed and points made: ranking of across the season makes sense and honestly last 10 games,
 
 
 
-# so we trend numerical columns that seems fine i just need to double check
-## then we need to create functions to trend categorical columns
 
 ## see if perofrmance improves and either way i need to figure out how to whiteboard and think of features that will actually have an impact
 ## honestly i'd be pretty at peace with 3-5 rmse off 
 
 
-## i really just needa few days to figure this out hten deploy whatever i land on 
-
-
 # TIME TREND: WE CREATE TWO TYPES: SHORT AND LONG FOR ANY FEATURES WE CREATE ---------------------------------------------
-
 static_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR']
 lagged_num_cols = ['PTS', 'SEC', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A',
        'FG3_PCT', 'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
@@ -353,7 +337,6 @@ for col in lagged_num_cols_complete:
 ## cat feats trend --------------
 lagged_cat_cols = ['HOME_VISITOR']
 
-
 game_team_regular_train = game_team_regular_train.set_index('GAME_DATE_EST')
 game_team_regular_train['home'] = np.where(game_team_regular_train['HOME_VISITOR']=='HOME', 1, 0)
 game_team_regular_train['away'] = np.where(game_team_regular_train['HOME_VISITOR']=='VISITOR', 1, 0)
@@ -389,7 +372,7 @@ game_team_regular_train = game_team_regular_train.reset_index()
 
 
 
-# LONG TREND WHOLE SEASON ROLLING -------------------------------------------------------------------------------
+# LONG TREND - WHOLE SEASON ROLLING -------------------------------------------------------------------------------
 
 ## num feats trend ---------------------------
 loop_place=0
@@ -438,22 +421,29 @@ game_team_regular_train = pd.concat([game_team_regular_train,temp_lagged_cat_col
 
 del temp_lagged_cat_col_df
 
+
+# CREATE ROLLING RANKINGS  -----------------------------------------------------------------
+
 # USE LAGGED FEATS TO CREATE RANKINGS: OFFENSE AND DEFENSE (Which is just opposing)
 ## you create rankings of differnt things which is rather interesting 
 
 
 
+
 lagged_num_cols_complete.remove('PTS')
 
-game_team_regular_train = game_team_regular_train.drop(lagged_num_cols_complete + contains_sig_nulls + ['home','away'], axis=1)
+
+game_team_regular_train_filtered = (
+    game_team_regular_train
+    .drop(lagged_num_cols_complete + contains_sig_nulls + ['home','away'], axis=1)
+    .dropna(subset=['team_lagged_PTS_rolling_5_mean'])
+    .reset_index(drop=True)
+)
 
 
-game_team_regular_train_filtered = game_team_regular_train.dropna(subset=['team_lagged_PTS_rolling_5_mean']).reset_index(drop=True)
 
 
-
-
-game_team_regular_train[(game_team_regular_train['TEAM_ID']=='1610612739') & (game_team_regular_train['SEASON']==2018)][['GAME_DATE_EST', 'days_since_last_game', 'TEAM_ID','game_count_7D','home_game_count_7D', 'away_game_count_7D']]
+game_team_regular_train[(game_team_regular_train['TEAM_ID']=='1610612739') & (game_team_regular_train['SEASON']==2018)][['GAME_DATE_EST', 'days_since_last_game','game_count_7D','home_game_count_7D', 'away_game_count_7D']].head(10)
 
 
 
@@ -538,12 +528,13 @@ col_trans_pipeline = ColumnTransformer(
     ]
 )
 
-# take x_train dataframe and from that take a random sample
+# CREATE TRAIN DF WE'LL USE RANDOM SAMPLE FROM TRAIN DF -----------------------------------------------
 
-train_sample = game_team_regular_train_filtered.sample(20000).reset_index(keep=False)
+train_sample = game_team_regular_train_filtered.sample(20000).reset_index(drop=True)
 
 X_train = train_sample[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
 y_train =  train_sample['PTS']
+
 
 # TRY ON A SINGLE TREE WITH VARYING DEPTHS TO SEE WHAT IT LOOKS LIKE ----------------------------
 from sklearn import tree
@@ -574,6 +565,15 @@ tree.plot_tree(single_tree_pipeline['model'][0],
                 fontsize=6)
 
 
+from dtreeviz.trees import dtreeviz
+
+viz = dtreeviz(single_tree_pipeline['model'][0], X_train, y_train, feature_names=feat_names, target_name="PTS")
+viz
+
+
+## random forest introduces randomness to it and averages a bunch of uncorrelated trees,
+## randomness is introduced by bootstrap sampling rows and selecting only a few columns to choose each split by
+
 
 # Mlflow Tracking  ---------------------------------------------------
 
@@ -592,10 +592,10 @@ with mlflow.start_run():
 
 
     #mlflow.sklearn.autolog() # need to check out what this records
-    model_name_tag = "xgb_v2"
+    model_name_tag = "rf_v3_log_pts"
     
-    model = LinearRegression()
-    #model = RandomForestRegressor(random_state=32, n_jobs=-1) # simple random forest since it takes so long to train
+    #model = LinearRegression()
+    model = RandomForestRegressor(random_state=32, n_estimators=10, min_samples_leaf=100, n_jobs=-1) # default n_estimators is 100
     #model = xgb.XGBRegressor(random_state=32)
 
     pipeline = Pipeline(steps=[
@@ -605,31 +605,81 @@ with mlflow.start_run():
 
     
     mlflow.set_tag('mlflow.runName', model_name_tag) 
-    mlflow.set_tag("mlflow.note.content", "V3 model add opposing teams statss")
+    mlflow.set_tag("mlflow.note.content", "V3 model add opposing teams stats and short + long term window sizes")
     
-
-    pipeline.fit(X_train, y_train)
+    y_train_log = np.log(y_train)
+    pipeline.fit(X_train, y_train_log)
     y_train_pred = pipeline.predict(X_train) 
     
     mse = mean_squared_error(y_train, y_train_pred)
     rmse = np.sqrt(mse)
     mae = mean_absolute_error(y_train, y_train_pred)
 
-    tscv = TimeSeriesSplit(n_splits=5)
 
     mlflow.log_metric("mse", mse)
     mlflow.log_metric("rmse", rmse)
     mlflow.log_metric("mae", mae)
 
+    print(f"MSE {mse}")
+    print(f"RMSE: {rmse}")
+    print(f"MAE: {mae}")
 
 
     mlflow.sklearn.log_model(pipeline, model_name_tag)
 
 
 
+r2_score(y_train, y_train_pred)
+
+# EXPLORE DISTRIBUTION OF ERRORS AFTER TRAINING ------------------------------------------
+
+train_pred_df = pd.DataFrame({'observed': y_train, 'predicted': y_train_pred})
+train_pred_df['residual'] = train_pred_df['predicted']-train_pred_df['observed']
+
+# look at distributionof y_train
+px.histogram(train_pred_df, x='observed')
+
+# look at distribution of residual
+px.histogram(train_pred_df, x='residual')
+
+
+# observe versus predicted 
+px.scatter(data_frame=train_pred_df, x='predicted', y='observed')
+
+
+
+# residual versus predicted 
+px.scatter(data_frame=train_pred_df, x='predicted', y='residual')
+
+
+
+
+# EXPLORE FEATURE IMPORTANCE AFTER TRAINING ---------------------------------------
+
+# random forest feature importance
+
+from rfpimp import *  # feature importance plot
+
+rf_importances = importances(pipeline, X_train, y_train)
+plot_importances(rf_importances.head(30))
+
+
+
+
+# I THINK THIS IS DONE LATER ------------------------------------
+# training error versus number of train records?
+
+# plot training error versus parameter complexity? --- this would be number of trees, or min_leaf_size for random forest and xgboost
+
+
+
+# RUN MODEL OVER SIMULATION OF SPORTSBOOK OUTCOME -----------
+
+from sklearn.inspection import permutation_importance
 
 # we'll save cross validation for the final steps here ------------------------
 
+tscv = TimeSeriesSplit(n_splits=5)
 
 cross_val_scores_r2 = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring=make_scorer(r2_score))
 cross_val_score_mse = cross_val_score(pipeline, X_train, y_train, cv=tscv, scoring='neg_mean_squared_error')
