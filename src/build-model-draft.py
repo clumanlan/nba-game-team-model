@@ -301,7 +301,7 @@ lagged_num_cols_complete = lagged_num_cols + lagged_num_cols_opposing
 
 # SHORT TREND ------------------------------------------------------------------------------------------
 
-## num feats trend -----------
+## num feats trend - general -----------
 loop_place=0
 
 for col in lagged_num_cols_complete:
@@ -332,7 +332,44 @@ for col in lagged_num_cols_complete:
 
     del temp_lagged_col_df
 
+## num feats trend - home_visitor -----------------------
+loop_place=0
 
+home_visitor_stats_track = ['PTS', 'PTS_allowed_opposing']
+
+temp_lagged_col_df = pd.DataFrame()
+
+for col in home_visitor_stats_track:
+    lagged_col_label = f'team_lagged_home_{col}'
+    temp_lagged_col_df[lagged_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='HOME'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1))
+
+    mean_col_label = f'team_lagged_home_{col}_rolling_{i}_mean'
+    temp_lagged_col_df[mean_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='HOME'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).mean())
+
+    median_col_label = f'team_lagged_home_{col}_rolling_{i}_median'
+    temp_lagged_col_df[median_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='HOME'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).median())
+
+    std_col_label = f'team_lagged_home_{col}_rolling_{i}_std'
+    temp_lagged_col_df[std_col_label]  = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='HOME'].groupby(['TEAM_ID',       'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).std())
+    
+
+    lagged_col_label = f'team_lagged_visitor_{col}'
+    temp_lagged_col_df[lagged_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='VISITOR'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1))
+
+    mean_col_label = f'team_lagged_visitor_{col}_rolling_{i}_mean'
+    temp_lagged_col_df[mean_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='VISITOR'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).mean())
+
+    median_col_label = f'team_lagged_visitor_{col}_rolling_{i}_median'
+    temp_lagged_col_df[median_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='VISITOR'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).median())
+
+    std_col_label = f'team_lagged_visitor_{col}_rolling_{i}_std'
+    temp_lagged_col_df[std_col_label]  = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='VISITOR'].groupby(['TEAM_ID',       'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).std())
+    
+    
+    
+# CHECK THIS NEXT TIME !!!!!!! -> THEN ADD TO SEASON
+
+game_team_regular_train[game_team_regular_train['TEAM_ID']=='1610612738'][['GAME_DATE_EST', 'HOME_VISITOR', 'PTS', 'test']].head(10)
 
 ## cat feats trend --------------
 lagged_cat_cols = ['HOME_VISITOR']
@@ -420,6 +457,7 @@ temp_lagged_cat_col_df = temp_lagged_cat_col_df.fillna(0)
 game_team_regular_train = pd.concat([game_team_regular_train,temp_lagged_cat_col_df], axis=1)
 
 del temp_lagged_cat_col_df
+
 
 
 # CREATE ROLLING RANKINGS  -----------------------------------------------------------------
@@ -662,6 +700,9 @@ from rfpimp import *  # feature importance plot
 
 rf_importances = importances(pipeline, X_train, y_train)
 plot_importances(rf_importances.head(30))
+
+# from this you can get team's average home visitor performance or just stats: short term (past 5 games) then rolling season: PTS AND PTS ALLOWED
+# could also calculate how much a visitor they are so how far game is 
 
 
 
