@@ -26,7 +26,9 @@ import xgboost as xgb
 
 pd.set_option('display.max_columns', None)
 
-# TODO: validate data :) create a baseline model, setup infrastrcutre for CI/CD to SAGEMAKER WITH MLFLOW, 
+# TODO: validate data :) create a baseline model, s
+# add features: distance from home
+# Setup infrastrcutre for CI/CD to SAGEMAKER WITH MLFLOW, 
 ##     could use pydantic to set column types of data coming in
 # USE MAPE? we'll use a bunch of different metric values 
 
@@ -308,21 +310,17 @@ for col in lagged_num_cols_complete:
     
     temp_lagged_col_df = pd.DataFrame()
 
+    ## accuracy flatlines at about 5 games out, with each game out happening there after only reducing by 0.1
+    lagged_col_label = f'team_lagged_{col}'
+    temp_lagged_col_df[lagged_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1))
+
     for i in range(2,6):
 
-        ## accuracy flatlines at about 5 games out, with each game out happening there after only reducing by 0.1
-        lagged_col_label = f'team_lagged_{col}'
-        temp_lagged_col_df[lagged_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1))
+        for stat_type in ['mean', 'median', 'std']:
 
-        mean_col_label = f'team_lagged_{col}_rolling_{i}_mean'
-        temp_lagged_col_df[mean_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).mean())
+            col_label = f'team_lagged_{col}_rolling_{i}_{stat_type}'
+            temp_lagged_col_df[col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).agg(stat_type))
 
-        median_col_label = f'team_lagged_{col}_rolling_{i}_median'
-        temp_lagged_col_df[median_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).median())
-
-        std_col_label = f'team_lagged_{col}_rolling_{i}_std'
-        temp_lagged_col_df[std_col_label]  = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).std())
-    
     game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
 
     loop_place+=1
@@ -332,6 +330,7 @@ for col in lagged_num_cols_complete:
 
     del temp_lagged_col_df
 
+
 ## num feats trend - home_visitor -----------------------
 loop_place=0
 
@@ -340,36 +339,30 @@ home_visitor_stats_track = ['PTS', 'PTS_allowed_opposing']
 temp_lagged_col_df = pd.DataFrame()
 
 for col in home_visitor_stats_track:
-    lagged_col_label = f'team_lagged_home_{col}'
-    temp_lagged_col_df[lagged_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='HOME'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1))
 
-    mean_col_label = f'team_lagged_home_{col}_rolling_{i}_mean'
-    temp_lagged_col_df[mean_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='HOME'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).mean())
+    lagged_col_label = f'team_lagged_home_visitor_{col}'
+    temp_lagged_col_df[lagged_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1))
 
-    median_col_label = f'team_lagged_home_{col}_rolling_{i}_median'
-    temp_lagged_col_df[median_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='HOME'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).median())
 
-    std_col_label = f'team_lagged_home_{col}_rolling_{i}_std'
-    temp_lagged_col_df[std_col_label]  = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='HOME'].groupby(['TEAM_ID',       'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).std())
-    
+    for i in range(2,6):
+        
+        for stat_type in ['mean', 'median', 'std']:
+            col_label = f'team_lagged_home_visitor_{col}_rolling_{i}_{stat_type}'
+            temp_lagged_col_df[col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).agg(stat_type))
 
-    lagged_col_label = f'team_lagged_visitor_{col}'
-    temp_lagged_col_df[lagged_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='VISITOR'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1))
 
-    mean_col_label = f'team_lagged_visitor_{col}_rolling_{i}_mean'
-    temp_lagged_col_df[mean_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='VISITOR'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).mean())
+    loop_place+=1
 
-    median_col_label = f'team_lagged_visitor_{col}_rolling_{i}_median'
-    temp_lagged_col_df[median_col_label] = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='VISITOR'].groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).median())
-
-    std_col_label = f'team_lagged_visitor_{col}_rolling_{i}_std'
-    temp_lagged_col_df[std_col_label]  = game_team_regular_train.loc[game_team_regular_train['HOME_VISITOR']=='VISITOR'].groupby(['TEAM_ID',       'SEASON'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).std())
+    pct_complate = loop_place/len(home_visitor_stats_track)
+    print("{:.2%}".format(pct_complate))
     
     
-    
-# CHECK THIS NEXT TIME !!!!!!! -> THEN ADD TO SEASON
+game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
 
-game_team_regular_train[game_team_regular_train['TEAM_ID']=='1610612738'][['GAME_DATE_EST', 'HOME_VISITOR', 'PTS', 'test']].head(10)
+del temp_lagged_col_df
+
+
+
 
 ## cat feats trend --------------
 lagged_cat_cols = ['HOME_VISITOR']
@@ -382,9 +375,10 @@ game_team_regular_train['away'] = np.where(game_team_regular_train['HOME_VISITOR
 window_size = ['7D', '14D', '30D']
 
 loop_place = 0
-for window in window_size:
+    
+temp_lagged_cat_col_df = pd.DataFrame()
 
-    temp_lagged_cat_col_df = pd.DataFrame()
+for window in window_size:
 
     temp_lagged_cat_col_df[f'game_count_{window}'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['GAME_ID'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).count())
 
@@ -396,16 +390,14 @@ for window in window_size:
 
     temp_lagged_cat_col_df = temp_lagged_cat_col_df.fillna(0)
 
-    game_team_regular_train = pd.concat([game_team_regular_train,temp_lagged_cat_col_df], axis=1)
-
-    del temp_lagged_cat_col_df
-
     loop_place+=1
     pct_complate = loop_place/len(window_size)
     print("{:.2%}".format(pct_complate))
 
+game_team_regular_train = pd.concat([game_team_regular_train,temp_lagged_cat_col_df], axis=1).reset_index()
 
-game_team_regular_train = game_team_regular_train.reset_index()
+del temp_lagged_cat_col_df
+
 
 
 
@@ -414,19 +406,17 @@ game_team_regular_train = game_team_regular_train.reset_index()
 ## num feats trend ---------------------------
 loop_place=0
 
+
 for col in lagged_num_cols_complete:
-    
+
     temp_lagged_col_df = pd.DataFrame()
 
-    mean_col_label = f'team_lagged_{col}_rolling_season_mean'
-    temp_lagged_col_df[mean_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=i).mean())
-
-    median_col_label = f'team_lagged_{col}_rolling_season_median'
-    temp_lagged_col_df[median_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=i).median())
-
-    std_col_label = f'team_lagged_{col}_rolling_season_std'
-    temp_lagged_col_df[std_col_label]  = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=i).std())
+    for stat_type in ['mean', 'median', 'std']:
+        
+        col_label = f'team_lagged_{col}_rolling_season_{stat_type}'
+        temp_lagged_col_df[col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=1).agg(stat_type))
     
+
     game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
 
     loop_place+=1
@@ -434,8 +424,39 @@ for col in lagged_num_cols_complete:
     pct_complate = loop_place/len(lagged_num_cols_complete)
     print("{:.2%}".format(pct_complate))
 
-    del temp_lagged_col_df
 
+del temp_lagged_col_df
+
+
+## num feats trend - home_visitor -----------------------
+
+loop_place=0
+
+home_visitor_stats_track = ['PTS', 'PTS_allowed_opposing']
+
+temp_lagged_col_df = pd.DataFrame()
+
+for col in home_visitor_stats_track:
+
+    for stat_type in ['mean', 'median', 'std']:
+
+        col_label = f'team_lagged_home_visitor_{col}_rolling_season_{stat_type}'
+        temp_lagged_col_df[col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=1).agg(stat_type))
+
+    loop_place+=1
+
+    pct_complate = loop_place/len(home_visitor_stats_track)
+    print("{:.2%}".format(pct_complate))
+    
+
+test = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
+
+test[test['TEAM_ID']=='1610612738'][['HOME_VISITOR', 'PTS','team_lagged_home_visitor_PTS_rolling_season_mean', 'team_lagged_home_visitor_PTS_rolling_season_std']]
+
+del temp_lagged_col_df
+
+test.TEAM_ID
+test[test['TEAM_ID']=='1610612737'][['GAME_DATE_EST', 'HOME_VISITOR', 'PTS','team_lagged_home_PTS_rolling_season_mean']]
 
 
 
@@ -465,6 +486,55 @@ del temp_lagged_cat_col_df
 # USE LAGGED FEATS TO CREATE RANKINGS: OFFENSE AND DEFENSE (Which is just opposing)
 ## you create rankings of differnt things which is rather interesting 
 
+
+
+
+
+
+
+
+stadium_locations = {
+    'Team': ['Los Angeles Lakers/Clippers', 'New York Knicks', 'Golden State Warriors', 'Milwaukee Bucks',
+             'Dallas Mavericks', 'Boston Celtics', 'Chicago Bulls', 'Toronto Raptors', 'Cleveland Cavaliers',
+             'New Orleans Pelicans', 'Philadelphia 76ers', 'Houston Rockets', 'Denver Nuggets',
+             'Atlanta Hawks', 'Miami Heat', 'Utah Jazz', 'Minnesota Timberwolves', 'Indiana Pacers',
+             'Portland Trail Blazers', 'Charlotte Hornets', 'Sacramento Kings', 'Detroit Pistons',
+             'Orlando Magic', 'Phoenix Suns', 'Brooklyn Nets', 'San Antonio Spurs', 'Oklahoma City Thunder',
+             'Washington Wizards', 'Memphis Grizzlies'],
+    'Latitude': [34.043056, 40.750556, 37.768056, 43.043611, 32.790556, 42.366389, 41.880556, 43.643333, 41.496944,
+                 29.949722, 39.952778, 29.750833, 39.748611, 33.757222, 25.781389, 40.768333, 44.979444, 39.763889,
+                 45.531667, 35.205833, 38.580833, 38.751667, 42.341111, 28.539167, 33.445833, 40.68265, 29.426944,
+                 38.898056, 35.138333],
+    'Longitude': [-118.267222, -73.993611, -122.3875, -87.916944, -96.810278, -71.062222, -87.674167, -79.379167, -81.688889,
+                  -90.081944, -75.190833, -95.370833, -104.996389, -84.396389, -80.188611, -111.901111, -93.276111, -86.155556,
+                  -122.666389, -80.839167, -121.968611, -77.012222, -83.045833, -81.379722, -112.2625, -73.974689, -98.495833,
+                  -95.341944, -77.036944],
+}
+
+ 
+
+nba_stadiums_df = pd.DataFrame(stadium_locations)
+
+nba_stadiums_df.merge(nba_stadiums_df, how='outer', left_index=True, right_index=True)
+
+import geopy.distance
+
+coords_1 = (52.2296756, 21.0122287)
+coords_2 = (52.406374, 16.9251681)
+
+geopy.distance.geodesic(coords_1, coords_2).miles
+
+nba_stadiums_df['_key'] = 1
+
+# Perform the cross join by merging on the constant column
+result = pd.merge(nba_stadiums_df, nba_stadiums_df, suffixes=['_a', '_b'], on='_key').drop('_key', axis=1)
+
+result[result['Team_a']!=result['Team_b']]
+
+
+
+
+def calculate_distance(l)
 
 
 
