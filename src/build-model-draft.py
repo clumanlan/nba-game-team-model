@@ -167,13 +167,30 @@ def get_team_level_dfs() -> tuple:
 
 
 def get_odds_data():
-    odds_path = "s3://nbadk-model/oddsshark/team_odds/nba_team_odds_historical.parquet"
+    odds_path = "s3://nbadk-model/odds/oddsshark/team_odds/nba_team_odds_historical.parquet"
 
     odds_data = wr.s3.read_parquet(
             path=odds_path,
             path_suffix=".parquet",
             use_threads=True
         )
+
+    return odds_data
+
+def get_odds_data_kaggle():
+    odds_path = "s3://nbadk-model/odds/kaggle_historical/nba_betting_spread.csv"
+
+    odds_data = wr.s3.read_csv(
+            path=odds_path,
+            path_suffix=".csv",
+            use_threads=True
+        )
+
+    return odds_data
+
+
+
+
 
 def get_sec(time_str):
     """Get seconds from time."""
@@ -247,7 +264,6 @@ game_team_regular_train = game_team_regular[game_team_regular['SEASON']<2019].co
 gr_train_home_base = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='HOME'][['TEAM_ID', 'GAME_ID']]
 gr_train_away_base = game_team_regular_train[game_team_regular_train['HOME_VISITOR']=='VISITOR'][['TEAM_ID', 'GAME_ID']]
 
-
 non_rel_opposing_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR', 'TEAM_ID', 'TEAM_NAME', 'OREB_PCT',
                          'DREB_PCT', 'REB_PCT']
 
@@ -271,17 +287,11 @@ gr_train_opposing = pd.concat([gr_train_away, gr_train_home])
 game_team_regular_train = pd.merge(game_team_regular_train, gr_train_opposing, how='left', on=['TEAM_ID', 'GAME_ID'])
 
 # the problem is i don't understand some of these stats and how they affect things: make a basic decision tree!
-# so i should see what features are importnat and if removing some of these that i don't understand affects performance
-# 
-
-
+# 3-5 RMSE IS GOAL 
 # ranking points allowed and points made: ranking of across the season makes sense and honestly last 10 games,
 
 
 
-
-## see if perofrmance improves and either way i need to figure out how to whiteboard and think of features that will actually have an impact
-## honestly i'd be pretty at peace with 3-5 rmse off 
 
 
 # TIME TREND: WE CREATE TWO TYPES: SHORT AND LONG FOR ANY FEATURES WE CREATE ---------------------------------------------
@@ -331,40 +341,7 @@ for col in lagged_num_cols_complete:
     del temp_lagged_col_df
 
 
-## num feats trend - home_visitor -----------------------
-loop_place=0
-
-home_visitor_stats_track = ['PTS', 'PTS_allowed_opposing']
-
-temp_lagged_col_df = pd.DataFrame()
-
-for col in home_visitor_stats_track:
-
-    lagged_col_label = f'team_lagged_home_visitor_{col}'
-    temp_lagged_col_df[lagged_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1))
-
-
-    for i in range(2,6):
-        
-        for stat_type in ['mean', 'median', 'std']:
-            col_label = f'team_lagged_home_visitor_{col}_rolling_{i}_{stat_type}'
-            temp_lagged_col_df[col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).agg(stat_type))
-
-
-    loop_place+=1
-
-    pct_complate = loop_place/len(home_visitor_stats_track)
-    print("{:.2%}".format(pct_complate))
-    
-    
-game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
-
-del temp_lagged_col_df
-
-
-
-
-## cat feats trend --------------
+## cat feats trend ---------------------------------
 lagged_cat_cols = ['HOME_VISITOR']
 
 game_team_regular_train = game_team_regular_train.set_index('GAME_DATE_EST')
@@ -428,7 +405,7 @@ for col in lagged_num_cols_complete:
 del temp_lagged_col_df
 
 
-## num feats trend - home_visitor -----------------------
+## num feats trend - home_visitor --------------------------
 
 loop_place=0
 
@@ -438,7 +415,7 @@ temp_lagged_col_df = pd.DataFrame()
 
 for col in home_visitor_stats_track:
 
-    for stat_type in ['mean', 'median', 'std']:
+    for stat_type in ['mean', 'median']:
 
         col_label = f'team_lagged_home_visitor_{col}_rolling_season_{stat_type}'
         temp_lagged_col_df[col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=1).agg(stat_type))
@@ -449,16 +426,13 @@ for col in home_visitor_stats_track:
     print("{:.2%}".format(pct_complate))
     
 
-test = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
+game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
 
-test[test['TEAM_ID']=='1610612738'][['HOME_VISITOR', 'PTS','team_lagged_home_visitor_PTS_rolling_season_mean', 'team_lagged_home_visitor_PTS_rolling_season_std']]
+game_team_regular_train[game_team_regular_train['TEAM_ID']=='1610612738'][['HOME_VISITOR', 'PTS','team_lagged_home_visitor_PTS_rolling_season_mean', 'team_lagged_home_visitor_PTS_rolling_season_std']]
+
+
 
 del temp_lagged_col_df
-
-test.TEAM_ID
-test[test['TEAM_ID']=='1610612737'][['GAME_DATE_EST', 'HOME_VISITOR', 'PTS','team_lagged_home_PTS_rolling_season_mean']]
-
-
 
 ## cat feats trend ---------------------------
 temp_lagged_cat_col_df = pd.DataFrame()
@@ -482,83 +456,147 @@ del temp_lagged_cat_col_df
 
 
 # CREATE ROLLING RANKINGS  -----------------------------------------------------------------
+## we basically creates a calendar (date time index) recording that team's stats for that given point
 
-# USE LAGGED FEATS TO CREATE RANKINGS: OFFENSE AND DEFENSE (Which is just opposing)
-## you create rankings of differnt things which is rather interesting 
+base_ranking_cols = ['TEAM_ID', 'SEASON', 'GAME_DATE_EST']
+rel_ranking_cols = ['team_lagged_PTS_rolling_season_mean', 'team_lagged_PTS_allowed_opposing_rolling_season_mean']
+
+game_team_regular_train.columns.tolist()
+team_season_calendar_list = []
+
+team_season_ranking_base = game_team_regular_train[base_ranking_cols + rel_ranking_cols]
+
+def reindex_by_date(df):
+    dates = pd.date_range(df.GAME_DATE_EST.min(), df.GAME_DATE_EST.max())
+    return df.reindex(dates).ffill()
+
+for season in game_team_regular_train.SEASON.unique():
+
+    df = team_season_ranking_base[team_season_ranking_base['SEASON']==season]
+    df.index = pd.DatetimeIndex(df.GAME_DATE_EST)
+
+    df = df.groupby('TEAM_ID').apply(reindex_by_date).reset_index(0, drop=True)
+    team_season_calendar_list.append(df)
+
+    print(season)
+
+team_season_ranking_calendar_df = pd.concat(team_season_calendar_list).reset_index(names='calendar_date')
+
+team_season_ranking_calendar_df = (team_season_ranking_calendar_df
+                                   .dropna(subset=rel_ranking_cols)
+                                   .drop('GAME_DATE_EST', axis=1)
+)
 
 
 
+for stat in rel_ranking_cols:
+    team_season_ranking_calendar_df[f'{stat}_rank_overall'] = team_season_ranking_calendar_df.groupby('calendar_date')[stat].rank(ascending=False)
 
 
+team_season_ranking_calendar_df = team_season_ranking_calendar_df.drop(['SEASON'] + rel_ranking_cols, axis=1)
+
+game_team_regular_train = pd.merge(game_team_regular_train, team_season_ranking_calendar_df, left_on= ['GAME_DATE_EST', 'TEAM_ID'], right_on =['calendar_date', 'TEAM_ID'], how='left')
 
 
+# DOUBLE CHECK THIS !!!!
+game_team_regular_train[['team_lagged_PTS_rolling_season_mean_rank_overall', 'team_lagged_PTS_allowed_opposing_rolling_season_mean_rank_overall']]
+
+# team_season_ranking_calendar_df[team_season_ranking_calendar_df['calendar_date']=='1999-11-07'].sort_values('team_lagged_PTS_rolling_season_mean')
+
+#MORE TO DO:
+## you could do this grouped by home and visitor as well, then also do this for other stats
+# when did some teams change stadiums? -- so in theory we'd actually have year as a column and merge on team names nad columns
+
+
+del team_season_ranking_base, team_season_calendar_list, team_season_ranking_calendar_df
+
+
+# DISTANCE FEATS ---------------------------------------------------------------------------
 
 stadium_locations = {
-    'Team': ['Los Angeles Lakers/Clippers', 'New York Knicks', 'Golden State Warriors', 'Milwaukee Bucks',
+    'Team': ['Los Angeles Lakers', 'Los Angeles Clippers', 'New York Knicks', 'Golden State Warriors', 'Milwaukee Bucks',
              'Dallas Mavericks', 'Boston Celtics', 'Chicago Bulls', 'Toronto Raptors', 'Cleveland Cavaliers',
              'New Orleans Pelicans', 'Philadelphia 76ers', 'Houston Rockets', 'Denver Nuggets',
              'Atlanta Hawks', 'Miami Heat', 'Utah Jazz', 'Minnesota Timberwolves', 'Indiana Pacers',
              'Portland Trail Blazers', 'Charlotte Hornets', 'Sacramento Kings', 'Detroit Pistons',
              'Orlando Magic', 'Phoenix Suns', 'Brooklyn Nets', 'San Antonio Spurs', 'Oklahoma City Thunder',
              'Washington Wizards', 'Memphis Grizzlies'],
-    'Latitude': [34.043056, 40.750556, 37.768056, 43.043611, 32.790556, 42.366389, 41.880556, 43.643333, 41.496944,
+    'Latitude': [34.043056, 34.043056, 40.750556, 37.768056, 43.043611, 32.790556, 42.366389, 41.880556, 43.643333, 41.496944,
                  29.949722, 39.952778, 29.750833, 39.748611, 33.757222, 25.781389, 40.768333, 44.979444, 39.763889,
                  45.531667, 35.205833, 38.580833, 38.751667, 42.341111, 28.539167, 33.445833, 40.68265, 29.426944,
                  38.898056, 35.138333],
-    'Longitude': [-118.267222, -73.993611, -122.3875, -87.916944, -96.810278, -71.062222, -87.674167, -79.379167, -81.688889,
+    'Longitude': [-118.267222, -118.267222, -73.993611, -122.3875, -87.916944, -96.810278, -71.062222, -87.674167, -79.379167, -81.688889,
                   -90.081944, -75.190833, -95.370833, -104.996389, -84.396389, -80.188611, -111.901111, -93.276111, -86.155556,
                   -122.666389, -80.839167, -121.968611, -77.012222, -83.045833, -81.379722, -112.2625, -73.974689, -98.495833,
                   -95.341944, -77.036944],
 }
 
- 
 
 nba_stadiums_df = pd.DataFrame(stadium_locations)
 
-nba_stadiums_df.merge(nba_stadiums_df, how='outer', left_index=True, right_index=True)
+nba_stadiums_df = (
+    nba_stadiums_df
+    .assign(TEAM_NAME= nba_stadiums_df['Team'].str.split().apply(lambda x: x[-1]),
+            _key = 1) # we use this key to cross join
+    .drop('Team', axis=1)
+)
+
+nba_stadiums_df = pd.merge(nba_stadiums_df, nba_stadiums_df, suffixes=['_a', '_b'], on='_key').drop('_key', axis=1)
+nba_stadiums_df = nba_stadiums_df[nba_stadiums_df['TEAM_NAME_a']!=nba_stadiums_df['TEAM_NAME_b']].reset_index(drop=True)
+
 
 import geopy.distance
 
-coords_1 = (52.2296756, 21.0122287)
-coords_2 = (52.406374, 16.9251681)
+def calculate_distance(row):
+    coords_1 = (row['Latitude_a'], row['Longitude_a'])
+    coords_2 = (row['Latitude_b'], row['Longitude_b'])
 
-geopy.distance.geodesic(coords_1, coords_2).miles
-
-nba_stadiums_df['_key'] = 1
-
-# Perform the cross join by merging on the constant column
-result = pd.merge(nba_stadiums_df, nba_stadiums_df, suffixes=['_a', '_b'], on='_key').drop('_key', axis=1)
-
-result[result['Team_a']!=result['Team_b']]
+    return geopy.distance.geodesic(coords_1, coords_2).miles
 
 
+nba_stadiums_df['distance_miles'] = nba_stadiums_df.apply(calculate_distance, axis=1)
 
 
-def calculate_distance(l)
+game_team_visitor_base = game_team_regular_train[['GAME_ID', 'TEAM_NAME', 'HOME_VISITOR']]
+
+game_team_visitor_base = game_team_visitor_base.merge(game_team_visitor_base, on='GAME_ID')
+game_team_visitor_base = game_team_visitor_base[(game_team_visitor_base['TEAM_NAME_x'] != game_team_visitor_base['TEAM_NAME_y']) & (game_team_visitor_base['HOME_VISITOR_x']=='VISITOR')]
 
 
+game_team_visitor_base = pd.merge(game_team_visitor_base, nba_stadiums_df, left_on=['TEAM_NAME_x','TEAM_NAME_y'], right_on=['TEAM_NAME_a', 'TEAM_NAME_b'])
+
+game_team_visitor_base = game_team_visitor_base[['GAME_ID', 'distance_miles']]
+game_team_visitor_base['HOME_VISITOR'] = 'VISITOR'
+
+game_team_regular_train = game_team_regular_train.merge(game_team_visitor_base, on=['GAME_ID', 'HOME_VISITOR'], how='left')
+game_team_regular_train['distance_miles'] = game_team_regular_train['distance_miles'].fillna(0)
+
+
+
+
+# WE DROP FEATS HERE --------------------------------
 
 lagged_num_cols_complete.remove('PTS')
-
 
 game_team_regular_train_filtered = (
     game_team_regular_train
     .drop(lagged_num_cols_complete + contains_sig_nulls + ['home','away'], axis=1)
-    .dropna(subset=['team_lagged_PTS_rolling_5_mean'])
+    .dropna(subset=['team_lagged_PTS_rolling_5_mean', 'team_lagged_home_visitor_PTS_rolling_season_mean']) 
     .reset_index(drop=True)
 )
 
+cols_with_nulls = game_team_regular_train_filtered.columns[game_team_regular_train_filtered.isnull().any()]
 
+for column in cols_with_nulls:
+    null_count = game_team_regular_train_filtered[column].isnull().sum()
+    print(f"Column '{column}' has {null_count} null values.")
 
-
-game_team_regular_train[(game_team_regular_train['TEAM_ID']=='1610612739') & (game_team_regular_train['SEASON']==2018)][['GAME_DATE_EST', 'days_since_last_game','game_count_7D','home_game_count_7D', 'away_game_count_7D']].head(10)
-
+## hawks and 76ers spend first five games of season away
 
 
 # BASELINE MODEL -------------------------------------------------------------
 
 ## accuracy flatlines at about 5 games out, with each game out happening there after only reducing by 0.1
-## that being said this is for the baseline model with just rolling averages of target variable and no other features + interactions 
 
 rolling_avg_five = game_team_regular_train_filtered['team_lagged_PTS_rolling_5_mean']
 actual = game_team_regular_train_filtered['PTS']
@@ -568,10 +606,7 @@ baseline_rmse = np.sqrt(mean_squared_error(actual, rolling_avg_five))
 baseline_mae = mean_absolute_error(actual, rolling_avg_five)
 
 
-
 # PROCESS FEATURES -----------------------------------------------------------
-
-# create a simple model first with year, rolling averages, and home and away
 
 # numeric feature processing --------------------------------------------------
 rel_num_feats = game_team_regular_train_filtered.select_dtypes(include=np.number).columns.tolist()
@@ -580,7 +615,7 @@ rel_num_feats.remove('PTS')
 num_pipeline = Pipeline(steps=[
     ('scale', StandardScaler())
 ])
-
+rel_num_feats
 
 
 # cat feature processing ------------------------------------------------------------
@@ -596,7 +631,6 @@ rel_cat_feats_low_card = ['HOME_VISITOR']
 cat_pipeline_low_card = Pipeline(steps=[
     ('encoder', OneHotEncoder(handle_unknown='ignore'))
 ])
-
 
 
 
@@ -627,7 +661,6 @@ date_pipeline = Pipeline(steps=[
 ])
 
 
-
 col_trans_pipeline = ColumnTransformer(
     transformers=[
         ('date', date_pipeline, ['GAME_DATE_EST']),
@@ -638,49 +671,11 @@ col_trans_pipeline = ColumnTransformer(
 
 # CREATE TRAIN DF WE'LL USE RANDOM SAMPLE FROM TRAIN DF -----------------------------------------------
 
-train_sample = game_team_regular_train_filtered.sample(20000).reset_index(drop=True)
+# we're going to switch this and do a train and valid set
 
-X_train = train_sample[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
-y_train =  train_sample['PTS']
+X_train = game_team_regular_train_filtered[rel_num_feats + rel_cat_feats_low_card + ['GAME_DATE_EST']]
+y_train =  game_team_regular_train_filtered['PTS']
 
-
-# TRY ON A SINGLE TREE WITH VARYING DEPTHS TO SEE WHAT IT LOOKS LIKE ----------------------------
-from sklearn import tree
-
-single_tree = RandomForestRegressor(n_estimators=1, max_depth=6,
-                          bootstrap=False, n_jobs=-1)
-
-single_tree_pipeline = Pipeline(steps=[
-    ('preprocess', col_trans_pipeline),
-    ('model', single_tree)
-])
-
-single_tree_pipeline.fit(X_train, y_train)
-
-y_train_pred = single_tree_pipeline.predict(X_train)
-r2_score(y_train, y_train_pred)
-
-
-num_feats = single_tree_pipeline.named_steps['preprocess'].transformers_[1][2]
-cat_feats = single_tree_pipeline.named_steps['preprocess'].transformers_[2][1].named_steps['encoder'].get_feature_names_out().tolist()
-
-feat_names = date_feats + num_feats + cat_feats
-
-tree.plot_tree(single_tree_pipeline['model'][0],
-                feature_names=feat_names,
-                filled=True,
-                rounded=True,
-                fontsize=6)
-
-
-from dtreeviz.trees import dtreeviz
-
-viz = dtreeviz(single_tree_pipeline['model'][0], X_train, y_train, feature_names=feat_names, target_name="PTS")
-viz
-
-
-## random forest introduces randomness to it and averages a bunch of uncorrelated trees,
-## randomness is introduced by bootstrap sampling rows and selecting only a few columns to choose each split by
 
 
 # Mlflow Tracking  ---------------------------------------------------
@@ -700,11 +695,11 @@ with mlflow.start_run():
 
 
     #mlflow.sklearn.autolog() # need to check out what this records
-    model_name_tag = "rf_v3_log_pts"
+    model_name_tag = "xgb_v4_basic_pts_rankings_n_stadium_distance"
     
     #model = LinearRegression()
-    model = RandomForestRegressor(random_state=32, n_estimators=10, min_samples_leaf=100, n_jobs=-1) # default n_estimators is 100
-    #model = xgb.XGBRegressor(random_state=32)
+    #model = RandomForestRegressor(random_state=32, n_estimators=10, min_samples_leaf=100, n_jobs=-1) # default n_estimators is 100
+    model = xgb.XGBRegressor(random_state=32)
 
     pipeline = Pipeline(steps=[
         ('preprocess', col_trans_pipeline),
@@ -713,10 +708,9 @@ with mlflow.start_run():
 
     
     mlflow.set_tag('mlflow.runName', model_name_tag) 
-    mlflow.set_tag("mlflow.note.content", "V3 model add opposing teams stats and short + long term window sizes")
+    mlflow.set_tag("mlflow.note.content", "V4 Basic Rankings and distnace metrics")
     
-    y_train_log = np.log(y_train)
-    pipeline.fit(X_train, y_train_log)
+    pipeline.fit(X_train, y_train)
     y_train_pred = pipeline.predict(X_train) 
     
     mse = mean_squared_error(y_train, y_train_pred)
@@ -755,7 +749,6 @@ px.histogram(train_pred_df, x='residual')
 px.scatter(data_frame=train_pred_df, x='predicted', y='observed')
 
 
-
 # residual versus predicted 
 px.scatter(data_frame=train_pred_df, x='predicted', y='residual')
 
@@ -763,16 +756,35 @@ px.scatter(data_frame=train_pred_df, x='predicted', y='residual')
 
 
 # EXPLORE FEATURE IMPORTANCE AFTER TRAINING ---------------------------------------
-
-# random forest feature importance
-
-from rfpimp import *  # feature importance plot
+from rfpimp import *  
 
 rf_importances = importances(pipeline, X_train, y_train)
 plot_importances(rf_importances.head(30))
 
-# from this you can get team's average home visitor performance or just stats: short term (past 5 games) then rolling season: PTS AND PTS ALLOWED
-# could also calculate how much a visitor they are so how far game is 
+
+
+
+# PERMUTATIN IMPORTANCE -----------------------------------------------------------
+
+from sklearn.inspection import permutation_importance
+result = permutation_importance(pipeline, X_train, y_train, n_repeats=10, random_state=32)
+importances = result.importances_mean
+
+rel_cat_feats_low_card
+
+pipeline.get_feature_names_out()
+
+cat_feats = 
+feats = [date_feats + rel_num_feats]
+
+
+# GET ODDS DATA -------------------------------------
+odds_data = get_odds_data()
+
+
+
+
+
 
 
 
@@ -784,9 +796,7 @@ plot_importances(rf_importances.head(30))
 
 
 
-# RUN MODEL OVER SIMULATION OF SPORTSBOOK OUTCOME -----------
 
-from sklearn.inspection import permutation_importance
 
 # we'll save cross validation for the final steps here ------------------------
 
@@ -800,3 +810,73 @@ cross_val_score_mae = cross_val_score(pipeline, X_train, y_train, cv=tscv, scori
 # mlflow.log_metric('cv_neg_mse', cross_val_score_mse.mean())
 # mlflow.log_metric('cv_rmse', np.mean(np.sqrt(np.abs(cross_val_score_mse))))
 # mlflow.log_metric('cv_mae', cross_val_score_mae.mean())
+
+
+
+
+# APPENDIX -------------------------------------------------------------------------------
+
+# WE HAVE TO REMOVE THIS BECAUSE IT CREATES TOO MANY NULLS 
+## num feats trend - home_visitor -----------------------
+loop_place=0
+
+home_visitor_stats_track = ['PTS', 'PTS_allowed_opposing']
+
+temp_lagged_col_df = pd.DataFrame()
+
+for col in home_visitor_stats_track:
+
+    lagged_col_label = f'team_lagged_home_visitor_{col}'
+    temp_lagged_col_df[lagged_col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1))
+
+
+    for i in range(2,6):
+        
+        for stat_type in ['mean', 'median', 'std']:
+            col_label = f'team_lagged_home_visitor_{col}_rolling_{i}_{stat_type}'
+            temp_lagged_col_df[col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1).rolling(i, min_periods=i).agg(stat_type))
+
+
+    loop_place+=1
+
+    pct_complate = loop_place/len(home_visitor_stats_track)
+    print("{:.2%}".format(pct_complate))
+    
+    
+game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
+
+del temp_lagged_col_df
+
+# TRY ON A SINGLE TREE WITH VARYING DEPTHS TO SEE WHAT IT LOOKS LIKE ----------------------------
+from sklearn import tree
+
+single_tree = RandomForestRegressor(n_estimators=1, max_depth=6,
+                          bootstrap=False, n_jobs=-1)
+
+single_tree_pipeline = Pipeline(steps=[
+    ('preprocess', col_trans_pipeline),
+    ('model', single_tree)
+])
+
+single_tree_pipeline.fit(X_train, y_train)
+
+y_train_pred = single_tree_pipeline.predict(X_train)
+r2_score(y_train, y_train_pred)
+
+
+num_feats = single_tree_pipeline.named_steps['preprocess'].transformers_[1][2]
+cat_feats = single_tree_pipeline.named_steps['preprocess'].transformers_[2][1].named_steps['encoder'].get_feature_names_out().tolist()
+
+feat_names = date_feats + num_feats + cat_feats
+
+tree.plot_tree(single_tree_pipeline['model'][0],
+                feature_names=feat_names,
+                filled=True,
+                rounded=True,
+                fontsize=6)
+
+
+from dtreeviz.trees import dtreeviz
+
+viz = dtreeviz(single_tree_pipeline['model'][0], X_train, y_train, feature_names=feat_names, target_name="PTS")
+viz
