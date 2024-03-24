@@ -58,12 +58,9 @@ game_team_regular_season = transform_data.create_reg_season_game_boxscore(game_h
 game_team_regular_season = transform_data.process_regular_team_boxscore(game_team_regular_season)
 
 
-# FILTER AND SPLIT --------------------------------
-
-
+# SPLIT???? --------------------------------
 game_team_regular_train = game_team_regular_season[game_team_regular_season['SEASON']<2019].copy()
 
-game_team_regular_train_filtered = game_team_regular_season[static_cols + lagged_num_cols_complete + cat_cols]
 
 
 
@@ -161,7 +158,7 @@ from sktime.registry import all_estimators
 all_estimators("forecaster", as_dataframe=True)
 
 rel_sktime_transformer = all_estimators(estimator_types="transformer",filter_tags='capability:unequal_length', as_dataframe=True)
-rel_sktime_transformer
+
 
 # ROLLING WEEK STATS THEN YOU FORECAST IT OUT 
 game_team_regular_train['TEAM_ID'] = game_team_regular_train['TEAM_ID'].astype(str)
