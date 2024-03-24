@@ -42,10 +42,7 @@ pd.set_option('display.max_columns', None)
 from buildmodelmodule.classes import GetData, TransformData, CreateTimeBasedFeatures
 
 
-# CREATE INITIAL FEATURES ----------------------------------------------
-
-
-# initialize the object:
+# initialize the class
 get_data = GetData()
 transform_data = TransformData()
 
@@ -61,23 +58,19 @@ game_team_regular_season = transform_data.create_reg_season_game_boxscore(game_h
 game_team_regular_season = transform_data.process_regular_team_boxscore(game_team_regular_season)
 
 
-
-
-
-game_team_regular_season
+# FILTER AND SPLIT --------------------------------
 
 
 game_team_regular_train = game_team_regular_season[game_team_regular_season['SEASON']<2019].copy()
 
-
-game_team_regular_train.GAME_DATE_WEEK_START
+game_team_regular_train_filtered = game_team_regular_season[static_cols + lagged_num_cols_complete + cat_cols]
 
 
 
 ## cat feats trend ---------------------------------
 cat_cols = ['HOME_VISITOR']
 
-game_team_regular_train = game_team_regular_train.set_index('GAME_DATE_EST')
+game_team_regular_season = game_team_regular_season.set_index('GAME_DATE_EST')
 
 
 window_size = ['7D', '14D', '30D']
@@ -88,13 +81,13 @@ temp_lagged_cat_col_df = pd.DataFrame()
 
 for window in window_size:
 
-    temp_lagged_cat_col_df[f'GAME_count_{window}'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['GAME_ID'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).count())
+    temp_lagged_cat_col_df[f'GAME_count_{window}'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['GAME_ID'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).count())
 
 
-    temp_lagged_cat_col_df[f'HOME_GAME_count_{window}'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['HOME'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
+    temp_lagged_cat_col_df[f'HOME_GAME_count_{window}'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['HOME'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
 
 
-    temp_lagged_cat_col_df[f'AWAY_GAME_count_{window}'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['AWAY'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
+    temp_lagged_cat_col_df[f'AWAY_GAME_count_{window}'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['AWAY'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
 
     temp_lagged_cat_col_df = temp_lagged_cat_col_df.fillna(0)
 
@@ -102,13 +95,12 @@ for window in window_size:
     pct_complate = loop_place/len(window_size)
     print("{:.2%}".format(pct_complate))
 
-game_team_regular_train = pd.concat([game_team_regular_train,temp_lagged_cat_col_df], axis=1).reset_index()
+game_team_regular_season = pd.concat([game_team_regular_season,temp_lagged_cat_col_df], axis=1).reset_index()
 
 del temp_lagged_cat_col_df
 
 
 
-game_team_regular_train_filtered = game_team_regular_season[static_cols + lagged_num_cols_complete + cat_cols]
 
 
 

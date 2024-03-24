@@ -179,9 +179,25 @@ class GetData():
 class TransformData():
 
     def __init__(self) -> None:
+
+        self.static_cols = ['SEASON', 'TEAM_ID', 'TEAM_NAME', 'GAME_DATE_EST', 'HOME_VISITOR']
+
+        self.cat_cols = ['HOME_VISITOR']
+
+        self.lagged_num_cols = ['PTS', 'SEC', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A',
+            'FG3_PCT', 'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
+            'BLK', 'TO', 'PF',  'PLUS_MINUS', 'E_OFF_RATING', 'OFF_RATING',
+            'E_DEF_RATING', 'DEF_RATING', 'E_NET_RATING', 'NET_RATING', 'AST_PCT',
+            'AST_TOV', 'AST_RATIO', 'E_TM_TOV_PCT', 'TM_TOV_PCT', 'EFG_PCT', 'TS_PCT', 'USG_PCT',
+            'E_USG_PCT', 'E_PACE', 'PACE', 'PACE_PER40', 'POSS', 'PIE'] #  contains_sig_nulls = ['OREB_PCT', 'DREB_PCT', 'REB_PCT']
+
+
+        self.lagged_num_cols_opposing = [f"{col}_allowed_opposing" for col in self.lagged_num_cols]
+        
+        self.lagged_num_cols_complete = self.lagged_num_cols + self.lagged_num_cols_opposing
+        
         pass
 
-    
     # CREATE GAME BOXSCORE AND OPPOSING STATS 
 
     def create_reg_season_game_boxscore(self, game_headers, boxscore_trad_team_df, boxscore_adv_team_df):
@@ -260,9 +276,12 @@ class TransformData():
             )
         )
 
+        rel_cols = self.static_cols + self.cat_cols + self.lagged_num_cols_complete 
+
+        game_team_regular_season_processed = game_team_regular_season_processed[rel_cols]
+
         return game_team_regular_season_processed
-
-
+    
 
 
 
