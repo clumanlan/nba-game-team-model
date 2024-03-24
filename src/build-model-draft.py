@@ -25,8 +25,7 @@ import xgboost as xgb
 from datetime import timedelta
 pd.set_option('display.max_columns', None)
 
-# TODO: validate data :) create a baseline model, s
-# add features: distance from home
+# TODO: 
 # Setup infrastrcutre for CI/CD to SAGEMAKER WITH MLFLOW, 
 ##     could use pydantic to set column types of data coming in
 # USE MAPE? we'll use a bunch of different metric values 
@@ -39,12 +38,17 @@ pd.set_option('display.max_columns', None)
 # much later date can bring in PLAYER DFS
 # check player dfs for missing game ids 
 
+
+
+
+
 from buildmodelmodule.classes import GetData, TransformData, CreateTimeBasedFeatures
 
 
 # initialize the class
 get_data = GetData()
 transform_data = TransformData()
+create_time_feats = CreateTimeBasedFeatures()
 
 # GET DATA FUNCTIONS -------------------------------------------------
 game_headers = get_data.get_game_headers_historical()
@@ -58,44 +62,26 @@ game_team_regular_season = transform_data.create_reg_season_game_boxscore(game_h
 game_team_regular_season = transform_data.process_regular_team_boxscore(game_team_regular_season)
 
 
-# SPLIT???? --------------------------------
+
+
+# SPLIT HERE???? --------------------------------
 game_team_regular_train = game_team_regular_season[game_team_regular_season['SEASON']<2019].copy()
 
 
 
-
-## cat feats trend ---------------------------------
-cat_cols = ['HOME_VISITOR']
-
-game_team_regular_season = game_team_regular_season.set_index('GAME_DATE_EST')
+# TIME FEATURE FUNCTIONS ----------------------------------------------------
 
 
-window_size = ['7D', '14D', '30D']
-
-loop_place = 0
-    
-temp_lagged_cat_col_df = pd.DataFrame()
-
-for window in window_size:
-
-    temp_lagged_cat_col_df[f'GAME_count_{window}'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['GAME_ID'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).count())
+game_team_regular_season = create_time_feats.create_cat_short_trend(game_team_regular_season)
+game_team_regular_season = create_time_feats.create_cat_season_trend(game_team_regular_season)
+game_team_regular_season = create_time_feats.create_num_season_trend(game_team_regular_season)
 
 
-    temp_lagged_cat_col_df[f'HOME_GAME_count_{window}'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['HOME'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
+# START WITH ADDING A TIMER FUNCTION ---------
+# pretty good spot to start adding features tomorrow,
+# first build exponential trend, ARIMA weekly, then see MSE this will probably take me all morning
 
-
-    temp_lagged_cat_col_df[f'AWAY_GAME_count_{window}'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['AWAY'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
-
-    temp_lagged_cat_col_df = temp_lagged_cat_col_df.fillna(0)
-
-    loop_place+=1
-    pct_complate = loop_place/len(window_size)
-    print("{:.2%}".format(pct_complate))
-
-game_team_regular_season = pd.concat([game_team_regular_season,temp_lagged_cat_col_df], axis=1).reset_index()
-
-del temp_lagged_cat_col_df
-
+# because i would need to try to do weekly trend as a separate dataframe then decompose that into something else
 
 
 
@@ -151,6 +137,7 @@ game_headers_df_rolling = wr.s3.read_parquet(
 # CREATE FEATS ------------------------------------------------------------------------------------------
 
 
+# EXPERIMENTAL TIME FEATS ----------------------------------
 
 # EXPONENTIAL SMOOTH SKTIME ARIMA OF GIVEN COLUMNS
 from sktime.registry import all_estimators
@@ -186,78 +173,6 @@ team_pts_regular_index = team_pts_regular_index.sort_index()
 # TIME TREND: WE CREATE TWO TYPES: SHORT AND LONG FOR ANY FEATURES WE CREATE ---------------------------------------------
 
 
-
-
-# LONG TREND - WHOLE SEASON ROLLING -------------------------------------------------------------------------------
-
-## num feats trend ---------------------------
-loop_place=0
-
-
-for col in lagged_num_cols_complete:
-
-    temp_lagged_col_df = pd.DataFrame()
-
-    for stat_type in ['mean', 'median', 'std']:
-        
-        col_label = f'team_lagged_{col}_rolling_season_{stat_type}'
-        temp_lagged_col_df[col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=1).agg(stat_type))
-    
-
-    game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
-
-    loop_place+=1
-
-    pct_complate = loop_place/len(lagged_num_cols_complete)
-    print("{:.2%}".format(pct_complate))
-
-
-del temp_lagged_col_df
-
-
-## num feats trend - home_visitor --------------------------
-
-loop_place=0
-
-home_visitor_stats_track = ['PTS', 'PTS_allowed_opposing']
-
-temp_lagged_col_df = pd.DataFrame()
-
-for col in home_visitor_stats_track:
-
-    for stat_type in ['mean', 'median']:
-
-        col_label = f'team_lagged_home_visitor_{col}_rolling_season_{stat_type}'
-        temp_lagged_col_df[col_label] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=1).agg(stat_type))
-
-    loop_place+=1
-
-    pct_complate = loop_place/len(home_visitor_stats_track)
-    print("{:.2%}".format(pct_complate))
-    
-
-game_team_regular_train = pd.concat([game_team_regular_train, temp_lagged_col_df], axis=1)
-
-
-del temp_lagged_col_df
-
-## cat feats trend ---------------------------
-
-temp_lagged_cat_col_df = pd.DataFrame()
-
-temp_lagged_cat_col_df['days_since_last_game'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['GAME_DATE_EST'].diff().dt.days
-
-temp_lagged_cat_col_df[f'game_count_season'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['GAME_ID'].transform(lambda x: x.shift(1).rolling(window=100, min_periods=1).count())
-
-temp_lagged_cat_col_df[f'home_game_count_season'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['home'].transform(lambda x: x.shift(1).rolling(window=100, min_periods=1).sum())
-
-temp_lagged_cat_col_df[f'away_game_count_season'] = game_team_regular_train.groupby(['TEAM_ID', 'SEASON'])['away'].transform(lambda x: x.shift(1).rolling(window=100, min_periods=1).sum())
-
-temp_lagged_cat_col_df = temp_lagged_cat_col_df.fillna(0)
-
-game_team_regular_train = pd.concat([game_team_regular_train,temp_lagged_cat_col_df], axis=1)
-
-del temp_lagged_cat_col_df
 
 
 

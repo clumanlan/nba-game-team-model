@@ -180,9 +180,9 @@ class TransformData():
 
     def __init__(self) -> None:
 
-        self.static_cols = ['SEASON', 'TEAM_ID', 'TEAM_NAME', 'GAME_DATE_EST', 'HOME_VISITOR']
+        self.static_cols = ['SEASON', 'TEAM_ID', 'TEAM_NAME', 'GAME_DATE_EST', 'GAME_ID']
 
-        self.cat_cols = ['HOME_VISITOR']
+        self.cat_cols = ['HOME_VISITOR', 'HOME', 'AWAY']
 
         self.lagged_num_cols = ['PTS', 'SEC', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A',
             'FG3_PCT', 'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
@@ -293,21 +293,111 @@ class TransformData():
 
 class CreateTimeBasedFeatures():
 
-    static_cols = ['game_type', 'SEASON', 'GAME_DATE_EST', 'HOME_VISITOR']
-    lagged_num_cols = ['PTS', 'SEC', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A',
-        'FG3_PCT', 'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
-        'BLK', 'TO', 'PF',  'PLUS_MINUS', 'E_OFF_RATING', 'OFF_RATING',
-        'E_DEF_RATING', 'DEF_RATING', 'E_NET_RATING', 'NET_RATING', 'AST_PCT',
-        'AST_TOV', 'AST_RATIO', 'E_TM_TOV_PCT', 'TM_TOV_PCT', 'EFG_PCT', 'TS_PCT', 'USG_PCT',
-        'E_USG_PCT', 'E_PACE', 'PACE', 'PACE_PER40', 'POSS', 'PIE']
-
-    lagged_num_cols_opposing = [f"{col}_allowed_opposing" for col in lagged_num_cols]
-
-    contains_sig_nulls = ['OREB_PCT', 'DREB_PCT', 'REB_PCT']
-
-    lagged_num_cols_complete = lagged_num_cols + lagged_num_cols_opposing
 
     def __init__(self) -> None:
+
+        self.static_cols = ['SEASON', 'TEAM_ID', 'TEAM_NAME', 'GAME_DATE_EST', 'GAME_ID']
+
+        self.cat_cols = ['HOME', 'AWAY']
+
+        self.lagged_num_cols = ['PTS', 'SEC', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A',
+            'FG3_PCT', 'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
+            'BLK', 'TO', 'PF',  'PLUS_MINUS', 'E_OFF_RATING', 'OFF_RATING',
+            'E_DEF_RATING', 'DEF_RATING', 'E_NET_RATING', 'NET_RATING', 'AST_PCT',
+            'AST_TOV', 'AST_RATIO', 'E_TM_TOV_PCT', 'TM_TOV_PCT', 'EFG_PCT', 'TS_PCT', 'USG_PCT',
+            'E_USG_PCT', 'E_PACE', 'PACE', 'PACE_PER40', 'POSS', 'PIE'] #  contains_sig_nulls = ['OREB_PCT', 'DREB_PCT', 'REB_PCT']
+
+
+        self.lagged_num_cols_opposing = [f"{col}_allowed_opposing" for col in self.lagged_num_cols]
+        
+        self.lagged_num_cols_complete = self.lagged_num_cols + self.lagged_num_cols_opposing
+
         pass
 
+
+
+    def create_cat_short_trend(self, game_team_regular_season):
+
+        game_team_regular_season = game_team_regular_season.set_index('GAME_DATE_EST')
+
+        window_size = ['7D', '14D', '30D']
+
+        loop_place = 0
+            
+        temp_lagged_cat_col_df = pd.DataFrame()
+
+        for window in window_size:
+
+            temp_lagged_cat_col_df[f'GAME_count_{window}'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['GAME_ID'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).count())
+
+
+            temp_lagged_cat_col_df[f'HOME_GAME_count_{window}'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['HOME'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
+
+
+            temp_lagged_cat_col_df[f'AWAY_GAME_count_{window}'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['AWAY'].transform(lambda x: x.shift(1).rolling(window, min_periods=1).sum())
+
+            
+        temp_lagged_cat_col_df = temp_lagged_cat_col_df.fillna(0)
+
+        game_team_regular_season = pd.concat([game_team_regular_season,temp_lagged_cat_col_df], axis=1).reset_index()
+
+        return game_team_regular_season
     
+    
+
+    def create_cat_season_trend(self, game_team_regular_season):
+
+        temp_lagged_cat_col_df = pd.DataFrame()
+
+        temp_lagged_cat_col_df['days_since_last_game'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['GAME_DATE_EST'].diff().dt.days
+
+        temp_lagged_cat_col_df[f'GAME_count_season'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['GAME_ID'].transform(lambda x: x.shift(1).rolling(window=100, min_periods=1).count())
+
+        temp_lagged_cat_col_df[f'HOME_GAME_count_season'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['HOME'].transform(lambda x: x.shift(1).rolling(window=100, min_periods=1).sum())
+
+        temp_lagged_cat_col_df[f'AWAY_GAME_count_season'] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])['AWAY'].transform(lambda x: x.shift(1).rolling(window=100, min_periods=1).sum())
+
+        temp_lagged_cat_col_df = temp_lagged_cat_col_df.fillna(0)
+
+        game_team_regular_season = pd.concat([game_team_regular_season,temp_lagged_cat_col_df], axis=1)
+
+        return game_team_regular_season
+
+
+
+    # could rewrite this depending on what i eventaully try to do!!!
+    def create_num_season_trend(self, game_team_regular_season):
+        
+        for col in self.lagged_num_cols_complete:
+
+            temp_lagged_col_df = pd.DataFrame()
+
+            for stat_type in ['mean', 'median', 'std']:
+                
+                col_label = f'team_lagged_{col}_rolling_season_{stat_type}'
+                temp_lagged_col_df[col_label] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=1).agg(stat_type))
+            
+
+            game_team_regular_season = pd.concat([game_team_regular_season, temp_lagged_col_df], axis=1)
+
+
+        del temp_lagged_col_df
+
+
+        home_visitor_stats_track = ['PTS', 'PTS_allowed_opposing']
+
+        temp_lagged_col_df = pd.DataFrame()
+
+        for col in home_visitor_stats_track:
+
+            for stat_type in ['mean', 'median', 'max', 'min']:
+
+                col_label = f'team_lagged_home_visitor_{col}_rolling_season_{stat_type}'
+                temp_lagged_col_df[col_label] = game_team_regular_season.groupby(['TEAM_ID', 'SEASON', 'HOME_VISITOR'])[col].transform(lambda x: x.shift(1).rolling(100, min_periods=1).agg(stat_type))
+
+            
+
+        game_team_regular_season = pd.concat([game_team_regular_season, temp_lagged_col_df], axis=1)
+
+
+        del temp_lagged_col_df
