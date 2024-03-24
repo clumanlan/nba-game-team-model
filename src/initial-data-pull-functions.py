@@ -12,6 +12,7 @@ import numpy as np
 import time
 import datetime as dt
 from time import sleep
+import geopy.distance
 
 # TO DO: 
 #        CREATE A FUNCTION THAT LOOKS AT GAME IDS  IN A GIVEN DATAFRAME THEN CHECKS WHETHER WE ARE MISSING ANY IN GAME HEADER
@@ -550,6 +551,58 @@ def get_and_write_odds_data():
     )
 
 
+
+# STADIUM DISTANCE  ---------------------------------------------------------------------------
+
+def calculate_distance(row):
+    coords_1 = (row['Latitude_a'], row['Longitude_a'])
+    coords_2 = (row['Latitude_b'], row['Longitude_b'])
+
+    return geopy.distance.geodesic(coords_1, coords_2).miles
+
+def create_stadium_distance_df():
+
+    stadium_locations = {
+        'Team': ['Los Angeles Lakers', 'Los Angeles Clippers', 'New York Knicks', 'Golden State Warriors', 'Milwaukee Bucks',
+                'Dallas Mavericks', 'Boston Celtics', 'Chicago Bulls', 'Toronto Raptors', 'Cleveland Cavaliers',
+                'New Orleans Pelicans', 'Philadelphia 76ers', 'Houston Rockets', 'Denver Nuggets',
+                'Atlanta Hawks', 'Miami Heat', 'Utah Jazz', 'Minnesota Timberwolves', 'Indiana Pacers',
+                'Portland Trail Blazers', 'Charlotte Hornets', 'Sacramento Kings', 'Detroit Pistons',
+                'Orlando Magic', 'Phoenix Suns', 'Brooklyn Nets', 'San Antonio Spurs', 'Oklahoma City Thunder',
+                'Washington Wizards', 'Memphis Grizzlies'],
+        'Latitude': [34.043056, 34.043056, 40.750556, 37.768056, 43.043611, 32.790556, 42.366389, 41.880556, 43.643333, 41.496944,
+                    29.949722, 39.952778, 29.750833, 39.748611, 33.757222, 25.781389, 40.768333, 44.979444, 39.763889,
+                    45.531667, 35.205833, 38.580833, 38.751667, 42.341111, 28.539167, 33.445833, 40.68265, 29.426944,
+                    38.898056, 35.138333],
+        'Longitude': [-118.267222, -118.267222, -73.993611, -122.3875, -87.916944, -96.810278, -71.062222, -87.674167, -79.379167, -81.688889,
+                    -90.081944, -75.190833, -95.370833, -104.996389, -84.396389, -80.188611, -111.901111, -93.276111, -86.155556,
+                    -122.666389, -80.839167, -121.968611, -77.012222, -83.045833, -81.379722, -112.2625, -73.974689, -98.495833,
+                    -95.341944, -77.036944],
+    }
+
+
+    nba_stadiums_df = pd.DataFrame(stadium_locations)
+
+    nba_stadiums_df = (
+        nba_stadiums_df
+        .assign(TEAM_NAME= nba_stadiums_df['Team'].str.split().apply(lambda x: x[-1]),
+                _key = 1) # we use this key to cross join
+        .drop('Team', axis=1)
+    )
+
+    nba_stadiums_df = pd.merge(nba_stadiums_df, nba_stadiums_df, suffixes=['_a', '_b'], on='_key').drop('_key', axis=1)
+    nba_stadiums_df = nba_stadiums_df[nba_stadiums_df['TEAM_NAME_a']!=nba_stadiums_df['TEAM_NAME_b']].reset_index(drop=True)
+
+    nba_stadiums_df['distance_miles'] = nba_stadiums_df.apply(calculate_distance, axis=1)
+
+
+    wr.s3.to_parquet(
+        df=nba_stadiums_df,
+        path=f's3://nbadk-model/stadiuminfo/stadium_distances/nba_stadium_location_distances.parquet'
+    )
+
+
+
 game_ids_pulled = get_game_header_game_ids()
 
 game_ids_pulled = set(game_ids_pulled)
@@ -557,28 +610,6 @@ game_ids_pulled = set(game_ids_pulled)
 player_info_df, boxscore_trad_player_df, boxscore_adv_player_df = get_player_dfs()
 
 boxscore_trad_team_df, boxscore_adv_team_df = get_team_level_dfs()
-
-
-
-
-pulled_trad_game_ids =  set(boxscore_trad_player_df['GAME_ID'].unique())
-
-
-pulled_adv_game_ids = set(boxscore_adv_player_df['GAME_ID'].unique())
-
-missing_trad_game_ids = game_ids_pulled - pulled_trad_game_ids
-
-missing_adv_game_ids = game_ids_pulled - pulled_adv_game_ids
-
-game_header = get_game_headers()
-game_header.GAMECODE.value_counts()
-
-boxscore_trad_team_df[boxscore_trad_team_df['GAME_ID'].isin(missing_adv_game_ids)]['GAME_DATE_EST'].dt.month.value_counts()
-
-boxscore_trad_player_df[boxscore_trad_player_df['GAME_ID'].isin(missing_adv_game_ids)]
-game_header_missing = game_header[game_header['GAME_ID'].isin(missing_adv_game_ids)]
-game_header_missing[game_header_missing['GAME_DATE_EST'].dt.month==2]
-
 
 # start in 2004?
 
