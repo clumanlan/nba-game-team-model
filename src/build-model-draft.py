@@ -76,6 +76,15 @@ game_team_regular_season = create_time_feats.create_cat_short_trend(game_team_re
 game_team_regular_season = create_time_feats.create_cat_season_trend(game_team_regular_season)
 game_team_regular_season = create_time_feats.create_num_season_trend(game_team_regular_season)
 
+game_team_regular_season.shape
+
+
+# DROP NONLAGGED NUM COLS !!!!!!! 'M CONFIDENT THIS IS DONE SOMWEHERE ANHYWAYS 
+
+
+
+game_team_regular_season
+
 
 # START WITH ADDING A TIMER FUNCTION ---------
 # pretty good spot to start adding features tomorrow,

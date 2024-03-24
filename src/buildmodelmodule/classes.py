@@ -401,3 +401,5 @@ class CreateTimeBasedFeatures():
 
 
         del temp_lagged_col_df
+
+        return game_team_regular_season
