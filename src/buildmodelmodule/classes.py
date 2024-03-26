@@ -173,6 +173,18 @@ class GetData():
             )
 
         return odds_data
+    
+    def get_nba_stadiums_distances_df(self):
+        
+        nba_stadiums_distances_path = "s3://nbadk-model/stadiuminfo/stadium_distances/"
+
+        nba_stadiums_distances_df = wr.s3.read_parquet(
+            path=nba_stadiums_distances_path,
+            path_suffix = ".parquet" ,
+            use_threads =True
+        )
+
+        return nba_stadiums_distances_df
 
 
 
@@ -282,6 +294,25 @@ class TransformData():
 
         return game_team_regular_season_processed
     
+    def add_visitor_stadium_distance(self, game_team_regular_season, stadium_distances_df):
+        
+        game_team_visitor_base = game_team_regular_season[['GAME_ID', 'TEAM_NAME', 'HOME_VISITOR']]
+
+        game_team_visitor_base = game_team_visitor_base.merge(game_team_visitor_base, on='GAME_ID')
+        game_team_visitor_base = game_team_visitor_base[(game_team_visitor_base['TEAM_NAME_x'] != game_team_visitor_base['TEAM_NAME_y']) & (game_team_visitor_base['HOME_VISITOR_x']=='VISITOR')]
+
+
+        game_team_visitor_base = pd.merge(game_team_visitor_base, stadium_distances_df, left_on=['TEAM_NAME_x','TEAM_NAME_y'], right_on=['TEAM_NAME_a', 'TEAM_NAME_b'])
+
+        game_team_visitor_base = game_team_visitor_base[['GAME_ID', 'distance_miles']]
+        game_team_visitor_base['HOME_VISITOR'] = 'VISITOR'
+
+        game_team_regular_season = game_team_regular_season.merge(game_team_visitor_base, on=['GAME_ID', 'HOME_VISITOR'], how='left')
+        game_team_regular_season['distance_miles'] = game_team_regular_season['distance_miles'].fillna(0)
+
+        return game_team_regular_season
+
+            
 
 
 

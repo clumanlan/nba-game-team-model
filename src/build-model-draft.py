@@ -30,13 +30,16 @@ pd.set_option('display.max_columns', None)
 ##     could use pydantic to set column types of data coming in
 # USE MAPE? we'll use a bunch of different metric values 
 
+# days since last home game: 
 
 # just basically the way this flow works is you create a feature you trend it out, the question is two fold right:
 # # what features matter and over what period of time
 
 
+
 # much later date can bring in PLAYER DFS
 # check player dfs for missing game ids 
+# traveling distance not accurate for teams on road
 
 
 
@@ -54,12 +57,16 @@ create_time_feats = CreateTimeBasedFeatures()
 game_headers = get_data.get_game_headers_historical()
 player_info_df, boxscore_trad_player_df, boxscore_adv_player_df = get_data.get_player_dfs()
 boxscore_trad_team_df, boxscore_adv_team_df = get_data.get_team_level_dfs()
-
+nba_stadiums_distances_df = get_data.get_nba_stadiums_df()
 
 # TRANSFORM DATA FUNCTIONS ------------------------------------------
 game_team_regular_season = transform_data.create_reg_season_game_boxscore(game_headers, boxscore_trad_team_df, boxscore_adv_team_df)
 
 game_team_regular_season = transform_data.process_regular_team_boxscore(game_team_regular_season)
+game_team_regular_season = transform_data.add_stadium_distances(game_team_regular_season, nba_stadiums_distances_df)
+
+
+
 
 
 
@@ -97,16 +104,6 @@ game_team_regular_season
 
 
 
-# READ IN STADIUM DISTANCE DATAFRAME
-
-nba_stadiums_path = "s3://nbadk-model/stadiuminfo/stadium_distances/"
-
-nba_stadiums_df = wr.s3.read_parquet(
-    path=nba_stadiums_path,
-    path_suffix = ".parquet" ,
-    use_threads =True
-)
-
 # enter max, min of all of num columns as well over different time frames,
 # FIGURE OUT HOW TO INSERT EXPONENTIAL SMOOTHING AND AUTOARIMA INTO NUM FEATS only for a few right: PTS, PTS_ALLOWED, POSSESIONS
 
@@ -116,6 +113,8 @@ nba_stadiums_df = wr.s3.read_parquet(
 
 odds_data = get_data.get_odds_data()
 kaggle_odds_data = get_data.get_odds_data_kaggle()
+
+
 
 
 
@@ -284,21 +283,6 @@ del team_season_ranking_base, team_season_calendar_list, team_season_ranking_cal
 
 
 
-
-
-game_team_visitor_base = game_team_regular_train[['GAME_ID', 'TEAM_NAME', 'HOME_VISITOR']]
-
-game_team_visitor_base = game_team_visitor_base.merge(game_team_visitor_base, on='GAME_ID')
-game_team_visitor_base = game_team_visitor_base[(game_team_visitor_base['TEAM_NAME_x'] != game_team_visitor_base['TEAM_NAME_y']) & (game_team_visitor_base['HOME_VISITOR_x']=='VISITOR')]
-
-
-game_team_visitor_base = pd.merge(game_team_visitor_base, nba_stadiums_df, left_on=['TEAM_NAME_x','TEAM_NAME_y'], right_on=['TEAM_NAME_a', 'TEAM_NAME_b'])
-
-game_team_visitor_base = game_team_visitor_base[['GAME_ID', 'distance_miles']]
-game_team_visitor_base['HOME_VISITOR'] = 'VISITOR'
-
-game_team_regular_train = game_team_regular_train.merge(game_team_visitor_base, on=['GAME_ID', 'HOME_VISITOR'], how='left')
-game_team_regular_train['distance_miles'] = game_team_regular_train['distance_miles'].fillna(0)
 
 
 
